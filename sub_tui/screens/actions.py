@@ -20,11 +20,12 @@ class MainDashboard(Screen):
         Binding("1", "filter_today", "Today", priority=True),
         Binding("2", "filter_week", "This Week", priority=True),
         Binding("3", "filter_next_week", "Next Week", priority=True),
-        Binding("a", "filter_all", "All Active", priority=True),
+        Binding("4", "filter_all", "All Active", priority=True),
         Binding("t", "toggle_archived", "Toggle Archived"),
-        Binding("x", "add_action", "New Action"),
+        Binding("e", "edit_item", "Edit"),
+        Binding("a", "add_item", "Add"),
         Binding("space", "toggle_action_status", "Toggle Status"),
-        Binding("d", "delete_action", "Delete"),
+        Binding("ctrl+d", "delete_item", "Delete"),
         Binding("ctrl+p", "subject_lookup", "Find Subject"),
         Binding("/", "subject_lookup", "Find Subject"),
         Binding("ctrl+q", "quit", "Quit"),
@@ -285,6 +286,60 @@ class MainDashboard(Screen):
         # Import here to avoid circular dependency
         from .subjects import SubjectDetailScreen
         self.app.push_screen(SubjectDetailScreen(self.db, subject_id))
+
+    def get_focused_table(self) -> tuple[DataTable | None, str]:
+        """Get the currently focused table and its ID."""
+        try:
+            focused = self.app.focused
+            if isinstance(focused, DataTable):
+                return focused, focused.id
+        except Exception:
+            pass
+        return None, ""
+
+    def action_edit_item(self) -> None:
+        """Edit the selected item (context-aware based on focused table)."""
+        table, table_id = self.get_focused_table()
+        if not table or table.cursor_row is None:
+            return
+
+        if table_id == "actions-table":
+            self.action_open_subject()
+        elif table_id in ("projects-table", "boards-table", "teams-table", "people-table"):
+            # Get the appropriate ID list
+            if table_id == "projects-table":
+                ids = self.project_ids
+            elif table_id == "boards-table":
+                ids = self.board_ids
+            elif table_id == "teams-table":
+                ids = self.team_ids
+            else:  # people-table
+                ids = self.person_ids
+
+            self.open_subject_from_table(ids, table.cursor_row)
+
+    def action_add_item(self) -> None:
+        """Add new item (context-aware based on focused table)."""
+        table, table_id = self.get_focused_table()
+
+        if table_id == "actions-table" or not table:
+            # Default to adding action
+            self.action_add_action()
+        elif table_id in ("projects-table", "boards-table", "teams-table", "people-table"):
+            # Add subject - determine type from table
+            self.notify("Adding subjects not yet implemented", severity="warning")
+
+    def action_delete_item(self) -> None:
+        """Delete the selected item (context-aware based on focused table)."""
+        table, table_id = self.get_focused_table()
+        if not table or table.cursor_row is None:
+            return
+
+        if table_id == "actions-table":
+            self.action_delete_action()
+        elif table_id in ("projects-table", "boards-table", "teams-table", "people-table"):
+            # Delete subject
+            self.notify("Deleting subjects not yet implemented", severity="warning")
 
     def refresh_subjects(self) -> None:
         """Refresh the subjects tables."""

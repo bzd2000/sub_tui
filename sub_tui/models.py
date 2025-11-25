@@ -123,6 +123,7 @@ class Meeting:
     """Records of encounters with a subject."""
     id: str
     subject_id: str
+    title: str
     date: datetime
     attendees: list[str]
     content: str  # Markdown content
@@ -134,6 +135,7 @@ class Meeting:
         return {
             "id": self.id,
             "subject_id": self.subject_id,
+            "title": self.title,
             "date": self.date.isoformat(),
             "attendees": self.attendees,
             "content": self.content,
@@ -147,6 +149,7 @@ class Meeting:
         return cls(
             id=data["id"],
             subject_id=data["subject_id"],
+            title=data.get("title", "Meeting"),  # Default for old data
             date=datetime.fromisoformat(data["date"]),
             attendees=data["attendees"],
             content=data["content"],
@@ -168,6 +171,7 @@ class Action:
     completed_at: Optional[datetime] = None
     archived_at: Optional[datetime] = None
     meeting_id: Optional[str] = None  # If created during meeting
+    note_id: Optional[str] = None  # If created from note
     agenda_item_id: Optional[str] = None  # If originated from agenda item
     tags: list[str] = field(default_factory=list)
 
@@ -184,6 +188,7 @@ class Action:
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "archived_at": self.archived_at.isoformat() if self.archived_at else None,
             "meeting_id": self.meeting_id,
+            "note_id": self.note_id,
             "agenda_item_id": self.agenda_item_id,
             "tags": self.tags,
         }
@@ -202,6 +207,7 @@ class Action:
             completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             archived_at=datetime.fromisoformat(data["archived_at"]) if data.get("archived_at") else None,
             meeting_id=data.get("meeting_id"),
+            note_id=data.get("note_id"),
             agenda_item_id=data.get("agenda_item_id"),
             tags=data.get("tags", []),
         )

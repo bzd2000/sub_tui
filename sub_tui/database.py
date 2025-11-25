@@ -57,6 +57,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS meetings (
                 id TEXT PRIMARY KEY,
                 subject_id TEXT NOT NULL,
+                title TEXT NOT NULL,
                 date TEXT NOT NULL,
                 attendees TEXT NOT NULL,
                 content TEXT NOT NULL,
@@ -218,6 +219,25 @@ class Database:
 
         self.conn.commit()
 
+        # Database migrations
+        self._run_migrations()
+
+    def _run_migrations(self) -> None:
+        """Run database migrations for schema updates."""
+        # Migration 1: Add title column to meetings table
+        cursor = self.conn.execute("PRAGMA table_info(meetings)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'title' not in columns:
+            self.conn.execute("ALTER TABLE meetings ADD COLUMN title TEXT DEFAULT 'Meeting'")
+            self.conn.commit()
+
+        # Migration 2: Add note_id column to actions table
+        cursor = self.conn.execute("PRAGMA table_info(actions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'note_id' not in columns:
+            self.conn.execute("ALTER TABLE actions ADD COLUMN note_id TEXT")
+            self.conn.commit()
+
     # ==================== Subject CRUD ====================
 
     def add_subject(self, subject: Subject) -> None:
@@ -349,11 +369,12 @@ class Database:
         """Add a new meeting."""
         self.conn.execute(
             """INSERT INTO meetings
-               (id, subject_id, date, attendees, content, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, subject_id, title, date, attendees, content, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 meeting.id,
                 meeting.subject_id,
+                meeting.title,
                 meeting.date.isoformat(),
                 ', '.join(meeting.attendees),
                 meeting.content,
@@ -386,9 +407,10 @@ class Database:
         """Update an existing meeting."""
         self.conn.execute(
             """UPDATE meetings
-               SET date = ?, attendees = ?, content = ?, updated_at = ?
+               SET title = ?, date = ?, attendees = ?, content = ?, updated_at = ?
                WHERE id = ?""",
             (
+                meeting.title,
                 meeting.date.isoformat(),
                 ', '.join(meeting.attendees),
                 meeting.content,
@@ -410,8 +432,8 @@ class Database:
         self.conn.execute(
             """INSERT INTO actions
                (id, subject_id, title, description, status, due_date, created_at,
-                completed_at, archived_at, meeting_id, agenda_item_id, tags)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                completed_at, archived_at, meeting_id, note_id, agenda_item_id, tags)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 action.id,
                 action.subject_id,
@@ -423,6 +445,7 @@ class Database:
                 action.completed_at.isoformat() if action.completed_at else None,
                 action.archived_at.isoformat() if action.archived_at else None,
                 action.meeting_id,
+                action.note_id,
                 action.agenda_item_id,
                 ', '.join(action.tags) if action.tags else None,
             )
@@ -453,7 +476,7 @@ class Database:
         self.conn.execute(
             """UPDATE actions
                SET title = ?, description = ?, status = ?, due_date = ?,
-                   completed_at = ?, archived_at = ?, meeting_id = ?,
+                   completed_at = ?, archived_at = ?, meeting_id = ?, note_id = ?,
                    agenda_item_id = ?, tags = ?
                WHERE id = ?""",
             (
@@ -464,6 +487,7 @@ class Database:
                 action.completed_at.isoformat() if action.completed_at else None,
                 action.archived_at.isoformat() if action.archived_at else None,
                 action.meeting_id,
+                action.note_id,
                 action.agenda_item_id,
                 ', '.join(action.tags) if action.tags else None,
                 action.id,
@@ -513,6 +537,22 @@ class Database:
         )
 
         return [dict(row) for row in cursor.fetchall()]
+
+    def get_actions_by_meeting(self, meeting_id: str) -> list[Action]:
+        """Get all actions created from a meeting."""
+        cursor = self.conn.execute(
+            "SELECT * FROM actions WHERE meeting_id = ? AND archived_at IS NULL ORDER BY created_at DESC",
+            (meeting_id,)
+        )
+        return [Action.from_dict(dict(row)) for row in cursor.fetchall()]
+
+    def get_actions_by_note(self, note_id: str) -> list[Action]:
+        """Get all actions created from a note."""
+        cursor = self.conn.execute(
+            "SELECT * FROM actions WHERE note_id = ? AND archived_at IS NULL ORDER BY created_at DESC",
+            (note_id,)
+        )
+        return [Action.from_dict(dict(row)) for row in cursor.fetchall()]
 
     # ==================== Note CRUD ====================
 

@@ -11,7 +11,8 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static, Label
 
 from ..database import Database
-from ..widgets import ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
+from ..models import Action, AgendaItem, Meeting, Note
+from ..widgets import NewMeetingDialog, NewNoteDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
 
 
 class SubjectDetailScreen(Screen):
@@ -68,6 +69,9 @@ class SubjectDetailScreen(Screen):
         Binding("escape", "pop_screen", "Back", priority=True),
         Binding("ctrl+q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
+        Binding("e", "edit_item", "Edit"),
+        Binding("a", "add_item", "Add"),
+        Binding("ctrl+d", "delete_item", "Delete"),
     ]
 
     def __init__(self, db: Database, subject_id: str, selected_action_id: Optional[str] = None):
@@ -302,7 +306,7 @@ class SubjectDetailScreen(Screen):
             meeting_id = self.meeting_ids[row_index]
             meeting = self.db.get_meeting(meeting_id)
             if meeting:
-                result = await self.app.push_screen_wait(ViewMeetingDialog(meeting))
+                result = await self.app.push_screen_wait(ViewMeetingDialog(meeting, self.db))
                 if result:
                     self.db.update_meeting(result)
                     self.refresh_meetings()
@@ -312,7 +316,7 @@ class SubjectDetailScreen(Screen):
             note_id = self.note_ids[row_index]
             note = self.db.get_note(note_id)
             if note:
-                result = await self.app.push_screen_wait(ViewNoteDialog(note))
+                result = await self.app.push_screen_wait(ViewNoteDialog(note, self.db))
                 if result:
                     self.db.update_note(result)
                     self.refresh_notes()
@@ -326,3 +330,147 @@ class SubjectDetailScreen(Screen):
     def action_pop_screen(self) -> None:
         """Go back to main dashboard."""
         self.app.pop_screen()
+
+    def get_focused_table(self) -> tuple[DataTable | None, str]:
+        """Get the currently focused table and its ID."""
+        try:
+            focused = self.app.focused
+            if isinstance(focused, DataTable):
+                return focused, focused.id
+        except Exception:
+            pass
+        return None, ""
+
+    def action_edit_item(self) -> None:
+        """Edit the selected item (context-aware based on focused table)."""
+        table, table_id = self.get_focused_table()
+        if not table or table.cursor_row is None:
+            return
+
+        # Same as pressing Enter - opens the edit dialog for the selected row
+        row_index = table.cursor_row
+
+        if table_id == "actions-table" and row_index < len(self.action_ids):
+            action_id = self.action_ids[row_index]
+            action = self.db.get_action(action_id)
+            if action:
+                self.app.call_later(self._edit_action, action)
+        elif table_id == "agenda-table" and row_index < len(self.agenda_ids):
+            agenda_id = self.agenda_ids[row_index]
+            agenda_item = self.db.get_agenda_item(agenda_id)
+            if agenda_item:
+                self.app.call_later(self._edit_agenda, agenda_item)
+        elif table_id == "meetings-table" and row_index < len(self.meeting_ids):
+            meeting_id = self.meeting_ids[row_index]
+            meeting = self.db.get_meeting(meeting_id)
+            if meeting:
+                self.app.call_later(self._edit_meeting, meeting)
+        elif table_id == "notes-table" and row_index < len(self.note_ids):
+            note_id = self.note_ids[row_index]
+            note = self.db.get_note(note_id)
+            if note:
+                self.app.call_later(self._edit_note, note)
+
+    @work
+    async def _edit_action(self, action: Action) -> None:
+        """Edit an action."""
+        result = await self.app.push_screen_wait(ViewActionDialog(action))
+        if result:
+            self.db.update_action(result)
+            self.refresh_actions()
+            self.notify(f"Action '{result.title}' updated")
+
+    @work
+    async def _edit_agenda(self, agenda_item: AgendaItem) -> None:
+        """Edit an agenda item."""
+        result = await self.app.push_screen_wait(ViewAgendaDialog(agenda_item))
+        if result:
+            self.db.update_agenda_item(result)
+            self.refresh_agenda()
+            self.notify(f"Agenda item '{result.title}' updated")
+
+    @work
+    async def _edit_meeting(self, meeting: Meeting) -> None:
+        """Edit a meeting."""
+        result = await self.app.push_screen_wait(ViewMeetingDialog(meeting, self.db))
+        if result:
+            self.db.update_meeting(result)
+            self.refresh_meetings()
+            self.notify("Meeting updated")
+
+    @work
+    async def _edit_note(self, note: Note) -> None:
+        """Edit a note."""
+        result = await self.app.push_screen_wait(ViewNoteDialog(note, self.db))
+        if result:
+            self.db.update_note(result)
+            self.refresh_notes()
+            self.notify(f"Note '{result.title}' updated")
+
+    def action_add_item(self) -> None:
+        """Add new item (context-aware based on focused table)."""
+        table, table_id = self.get_focused_table()
+
+        if table_id == "agenda-table":
+            self.notify("Adding agenda items not yet implemented", severity="warning")
+        elif table_id == "actions-table":
+            self.notify("Adding actions not yet implemented", severity="warning")
+        elif table_id == "meetings-table":
+            self.app.call_later(self._add_meeting)
+        elif table_id == "notes-table":
+            self.app.call_later(self._add_note)
+        else:
+            self.notify("Select a table first", severity="warning")
+
+    @work
+    async def _add_meeting(self) -> None:
+        """Add a new meeting."""
+        result = await self.app.push_screen_wait(NewMeetingDialog(self.subject_id, self.db))
+        if result:
+            self.db.add_meeting(result)
+            self.refresh_meetings()
+            self.notify("Meeting created")
+
+    @work
+    async def _add_note(self) -> None:
+        """Add a new note."""
+        result = await self.app.push_screen_wait(NewNoteDialog(self.subject_id, self.db))
+        if result:
+            self.db.add_note(result)
+            self.refresh_notes()
+            self.notify(f"Note '{result.title}' created")
+
+    def action_delete_item(self) -> None:
+        """Delete the selected item (context-aware based on focused table)."""
+        table, table_id = self.get_focused_table()
+        if not table or table.cursor_row is None:
+            return
+
+        if table_id == "actions-table" and table.cursor_row < len(self.action_ids):
+            action_id = self.action_ids[table.cursor_row]
+            action = self.db.get_action(action_id)
+            if action:
+                self.db.delete_action(action_id)
+                self.refresh_actions()
+                self.notify(f"Deleted action: {action.title}")
+        elif table_id == "agenda-table" and table.cursor_row < len(self.agenda_ids):
+            agenda_id = self.agenda_ids[table.cursor_row]
+            agenda_item = self.db.get_agenda_item(agenda_id)
+            if agenda_item:
+                self.db.delete_agenda_item(agenda_id)
+                self.refresh_agenda()
+                self.notify(f"Deleted agenda item: {agenda_item.title}")
+        elif table_id == "meetings-table" and table.cursor_row < len(self.meeting_ids):
+            meeting_id = self.meeting_ids[table.cursor_row]
+            meeting = self.db.get_meeting(meeting_id)
+            if meeting:
+                self.db.delete_meeting(meeting_id)
+                self.refresh_meetings()
+                self.notify("Deleted meeting")
+        elif table_id == "notes-table" and table.cursor_row < len(self.note_ids):
+            note_id = self.note_ids[table.cursor_row]
+            note = self.db.get_note(note_id)
+            if note:
+                self.db.delete_note(note_id)
+                self.refresh_notes()
+                self.notify(f"Deleted note: {note.title}")

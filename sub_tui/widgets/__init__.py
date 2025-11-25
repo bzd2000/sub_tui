@@ -7,6 +7,8 @@ This module will contain:
 
 from .dialogs import (
     NewActionDialog,
+    NewMeetingDialog,
+    NewNoteDialog,
     ViewActionDialog,
     ViewAgendaDialog,
     ViewMeetingDialog,
@@ -15,6 +17,8 @@ from .dialogs import (
 
 __all__ = [
     "NewActionDialog",
+    "NewMeetingDialog",
+    "NewNoteDialog",
     "ViewActionDialog",
     "ViewAgendaDialog",
     "ViewMeetingDialog",
