@@ -348,11 +348,11 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
 
         if result:
             # Save action to database
-            self.app.call_from_thread(self.db.add_action, result)
+            self.db.add_action(result)
 
             # Insert action reference at cursor position
             action_ref = f"@action[{result.id}]{{{result.title}}}\n"
-            self.app.call_from_thread(text_area.insert, action_ref, (cursor_row, cursor_col))
+            text_area.insert(action_ref, (cursor_row, cursor_col))
 
             self.notify(f"Action '{result.title}' created and linked")
 
@@ -559,11 +559,11 @@ class ViewMeetingDialog(ModalScreen[Meeting | None]):
 
         if result:
             # Save action to database
-            self.app.call_from_thread(self.db.add_action, result)
+            self.db.add_action(result)
 
             # Insert action reference at cursor position
             action_ref = f"@action[{result.id}]{{{result.title}}}\n"
-            self.app.call_from_thread(text_area.insert, action_ref, (cursor_row, cursor_col))
+            text_area.insert(action_ref, (cursor_row, cursor_col))
 
             self.notify(f"Action '{result.title}' created and linked")
 
@@ -767,11 +767,11 @@ class NewNoteDialog(ModalScreen[Note | None]):
 
         if result:
             # Save action to database
-            self.app.call_from_thread(self.db.add_action, result)
+            self.db.add_action(result)
 
             # Insert action reference at cursor position
             action_ref = f"@action[{result.id}]{{{result.title}}}\n"
-            self.app.call_from_thread(text_area.insert, action_ref, (cursor_row, cursor_col))
+            text_area.insert(action_ref, (cursor_row, cursor_col))
 
             self.notify(f"Action '{result.title}' created and linked")
 
@@ -962,11 +962,11 @@ class ViewNoteDialog(ModalScreen[Note | None]):
 
         if result:
             # Save action to database
-            self.app.call_from_thread(self.db.add_action, result)
+            self.db.add_action(result)
 
             # Insert action reference at cursor position
             action_ref = f"@action[{result.id}]{{{result.title}}}\n"
-            self.app.call_from_thread(text_area.insert, action_ref, (cursor_row, cursor_col))
+            text_area.insert(action_ref, (cursor_row, cursor_col))
 
             self.notify(f"Action '{result.title}' created and linked")
 
