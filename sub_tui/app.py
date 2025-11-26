@@ -20,30 +20,9 @@ class SubTUIApp(App):
         padding: 1 2;
     }
 
-    #title {
-        width: 100%;
-        text-align: center;
-        padding: 1;
-        text-style: bold;
-        color: $accent;
-    }
-
-    #filter-tabs {
-        width: 100%;
-        height: auto;
-        padding: 1 0;
-    }
-
-    #filter-label {
-        width: 100%;
-        text-align: center;
-        color: $text-muted;
-    }
-
     #actions-section {
         width: 100%;
         height: 1fr;
-        margin-top: 1;
         padding: 1;
         border: solid $primary;
         background: $surface;

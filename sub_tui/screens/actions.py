@@ -49,12 +49,6 @@ class MainDashboard(Screen):
         yield Header()
 
         with Container(id="main-container"):
-            yield Static("Main Dashboard", id="title")
-
-            # Filter tabs
-            with Horizontal(id="filter-tabs"):
-                yield Label("1:Today  2:Week  3:Next  A:All  T:Archive", id="filter-label")
-
             # Actions table (full width, top half)
             with Container(id="actions-section"):
                 yield Label("Actions", id="actions-header")
