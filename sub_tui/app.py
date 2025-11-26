@@ -42,7 +42,6 @@ class SubTUIApp(App):
     #subjects-grid {
         width: 100%;
         height: 1fr;
-        margin-top: 1;
         grid-size: 2 2;
         grid-gutter: 0;
     }
