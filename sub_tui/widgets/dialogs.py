@@ -10,7 +10,149 @@ from textual.containers import Grid, Vertical, VerticalScroll, Container
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, TextArea, Static, Markdown, Header
 
-from ..models import Action, ActionStatus, Subject, Meeting, Note, AgendaItem, AgendaStatus
+from ..models import Action, ActionStatus, Subject, SubjectType, Meeting, Note, AgendaItem, AgendaStatus
+
+
+class NewSubjectDialog(ModalScreen[Subject | None]):
+    """Dialog for creating a new subject."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+s", "save", "Create"),
+    ]
+
+    CSS = """
+    NewSubjectDialog {
+        background: black;
+    }
+
+    #dialog-container {
+        width: 60%;
+        height: auto;
+        margin: 5 5;
+        background: black;
+        border: solid $primary;
+        padding: 1 2;
+    }
+
+    #form-header {
+        width: 100%;
+        height: auto;
+        background: black;
+        padding: 0 2;
+        border-bottom: solid $primary;
+    }
+
+    #form-header Static {
+        text-style: bold;
+        color: $accent;
+    }
+
+    #form-content {
+        width: 100%;
+        height: auto;
+        padding: 1 2;
+    }
+
+    #form-content Label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    #form-content Input {
+        margin-bottom: 0;
+    }
+
+    #form-content Select {
+        margin-bottom: 0;
+    }
+
+    #instructions {
+        width: 100%;
+        height: auto;
+        padding: 0 2;
+        background: $boost;
+        color: $warning;
+    }
+    """
+
+    def __init__(self, subject_type: SubjectType = None):
+        """Initialize dialog with optional pre-selected type.
+
+        Args:
+            subject_type: Optional pre-selected subject type
+        """
+        super().__init__()
+        self.default_type = subject_type
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog."""
+        with Container(id="dialog-container"):
+            # Header
+            with Container(id="form-header"):
+                yield Static("New Subject")
+
+            # Instructions
+            yield Static("Fill in the details below. Ctrl+S to create, Esc to cancel.", id="instructions")
+
+            # Form content
+            with Vertical(id="form-content"):
+                yield Label("Name:")
+                yield Input(placeholder="Subject name", id="name-input")
+
+                yield Label("Type:")
+                type_options = [
+                    ("Project", "project"),
+                    ("Board", "board"),
+                    ("Team", "team"),
+                    ("Person", "person"),
+                ]
+                default_value = self.default_type.value if self.default_type else "project"
+                yield Select(type_options, value=default_value, id="type-select")
+
+                yield Label("Code (optional):")
+                yield Input(placeholder="Short code (e.g., PROJ-1)", id="code-input")
+
+                yield Label("Description (optional):")
+                yield Input(placeholder="Brief description", id="description-input")
+
+    def on_mount(self) -> None:
+        """Focus the name input when dialog opens."""
+        name_input = self.query_one("#name-input", Input)
+        name_input.focus()
+
+    def action_cancel(self) -> None:
+        """Cancel and close dialog."""
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        """Create subject and close dialog."""
+        name_input = self.query_one("#name-input", Input)
+        type_select = self.query_one("#type-select", Select)
+        code_input = self.query_one("#code-input", Input)
+        description_input = self.query_one("#description-input", Input)
+
+        name = name_input.value.strip()
+        if not name:
+            self.notify("Name is required", severity="error")
+            return
+
+        subject_type = SubjectType(type_select.value)
+        code = code_input.value.strip() or None
+        description = description_input.value.strip() or None
+
+        now = datetime.now()
+        subject = Subject(
+            id=str(uuid.uuid4()),
+            name=name,
+            type=subject_type,
+            code=code,
+            description=description,
+            created_at=now,
+            last_reviewed_at=now,
+        )
+
+        self.dismiss(subject)
 
 
 class NewActionDialog(ModalScreen[Action | None]):

@@ -10,7 +10,8 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from ..database import Database
-from ..widgets import NewActionDialog
+from ..models import SubjectType
+from ..widgets import NewActionDialog, NewSubjectDialog
 
 
 class MainDashboard(Screen):
@@ -325,9 +326,23 @@ class MainDashboard(Screen):
         if table_id == "actions-table" or not table:
             # Default to adding action
             self.action_add_action()
-        elif table_id in ("projects-table", "boards-table", "teams-table", "people-table"):
-            # Add subject - determine type from table
-            self.notify("Adding subjects not yet implemented", severity="warning")
+        elif table_id == "projects-table":
+            self._add_subject(SubjectType.PROJECT)
+        elif table_id == "boards-table":
+            self._add_subject(SubjectType.BOARD)
+        elif table_id == "teams-table":
+            self._add_subject(SubjectType.TEAM)
+        elif table_id == "people-table":
+            self._add_subject(SubjectType.PERSON)
+
+    @work
+    async def _add_subject(self, subject_type: SubjectType) -> None:
+        """Add a new subject of the given type."""
+        result = await self.app.push_screen_wait(NewSubjectDialog(subject_type))
+        if result:
+            self.db.add_subject(result)
+            self.refresh_subjects()
+            self.notify(f"{subject_type.value.title()} '{result.name}' created")
 
     def action_delete_item(self) -> None:
         """Delete the selected item (context-aware based on focused table)."""
@@ -343,8 +358,6 @@ class MainDashboard(Screen):
 
     def refresh_subjects(self) -> None:
         """Refresh the subjects tables."""
-        from ..models import SubjectType
-
         # Get all subjects
         all_subjects = self.db.get_all_subjects()
 
