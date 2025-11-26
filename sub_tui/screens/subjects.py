@@ -124,7 +124,7 @@ class SubjectDetailScreen(Screen):
             with Vertical(classes="section-card"):
                 yield Label("Meeting Minutes", classes="section-header")
                 table = DataTable(id="meetings-table", classes="section-table")
-                table.add_columns("Date", "Attendees")
+                table.add_columns("Date", "Title", "Attendees")
                 table.cursor_type = "row"
                 yield table
 
@@ -245,14 +245,15 @@ class SubjectDetailScreen(Screen):
             self.meeting_ids.append(meeting.id)
 
             date_str = meeting.date.strftime("%Y-%m-%d")
+            title = meeting.title or "Untitled"
             attendees_str = ", ".join(meeting.attendees[:3])
             if len(meeting.attendees) > 3:
                 attendees_str += f" +{len(meeting.attendees)-3} more"
 
-            table.add_row(date_str, attendees_str)
+            table.add_row(date_str, title, attendees_str)
 
         if not self.meeting_ids:
-            table.add_row("[dim italic]No meetings[/dim italic]", "")
+            table.add_row("[dim italic]No meetings[/dim italic]", "", "")
 
     def refresh_notes(self) -> None:
         """Refresh the notes section."""
