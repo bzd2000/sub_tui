@@ -196,6 +196,15 @@ class Action:
     @classmethod
     def from_dict(cls, data: dict) -> "Action":
         """Create from dictionary."""
+        # Parse tags - can be a list, comma-separated string, or None
+        tags_data = data.get("tags")
+        if isinstance(tags_data, list):
+            tags = tags_data
+        elif isinstance(tags_data, str) and tags_data:
+            tags = [t.strip() for t in tags_data.split(",") if t.strip()]
+        else:
+            tags = []
+
         return cls(
             id=data["id"],
             subject_id=data["subject_id"],
@@ -209,7 +218,7 @@ class Action:
             meeting_id=data.get("meeting_id"),
             note_id=data.get("note_id"),
             agenda_item_id=data.get("agenda_item_id"),
-            tags=data.get("tags", []),
+            tags=tags,
         )
 
 
@@ -239,12 +248,21 @@ class Note:
     @classmethod
     def from_dict(cls, data: dict) -> "Note":
         """Create from dictionary."""
+        # Parse tags - can be a list, comma-separated string, or None
+        tags_data = data.get("tags")
+        if isinstance(tags_data, list):
+            tags = tags_data
+        elif isinstance(tags_data, str) and tags_data:
+            tags = [t.strip() for t in tags_data.split(",") if t.strip()]
+        else:
+            tags = []
+
         return cls(
             id=data["id"],
             subject_id=data["subject_id"],
             title=data["title"],
             content=data["content"],
-            tags=data.get("tags", []),
+            tags=tags,
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )
