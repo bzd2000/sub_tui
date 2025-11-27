@@ -950,6 +950,132 @@ class NewNoteDialog(ModalScreen[Note | None]):
         self.dismiss(note)
 
 
+class NewAgendaDialog(ModalScreen[AgendaItem | None]):
+    """Dialog for creating a new agenda item."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+s", "save", "Create"),
+    ]
+
+    CSS = """
+    NewAgendaDialog {
+        background: black;
+    }
+
+    #dialog-container {
+        width: 60%;
+        height: auto;
+        margin: 5 5;
+        background: black;
+        border: solid $primary;
+        padding: 1 2;
+    }
+
+    #form-header {
+        width: 100%;
+        height: auto;
+        background: black;
+        padding: 0 2;
+        border-bottom: solid $primary;
+    }
+
+    #form-header Static {
+        text-style: bold;
+        color: $accent;
+    }
+
+    #form-content {
+        width: 100%;
+        height: auto;
+        padding: 1 2;
+    }
+
+    #form-content Label {
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    #form-content Input {
+        margin-bottom: 0;
+    }
+
+    #form-content Select {
+        margin-bottom: 0;
+    }
+
+    #instructions {
+        width: 100%;
+        height: auto;
+        padding: 0 2;
+        background: $boost;
+        color: $warning;
+    }
+    """
+
+    def __init__(self, subject_id: str):
+        """Initialize dialog with subject ID."""
+        super().__init__()
+        self.subject_id = subject_id
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog."""
+        with Container(id="dialog-container"):
+            # Header
+            with Container(id="form-header"):
+                yield Static("New Agenda Item")
+
+            # Instructions
+            yield Static("Fill in the details below. Ctrl+S to create, Esc to cancel.", id="instructions")
+
+            # Form content
+            with Vertical(id="form-content"):
+                yield Label("Title:")
+                yield Input(placeholder="Agenda item title", id="title-input")
+
+                yield Label("Priority (1-10):")
+                priority_options = [(str(i), i) for i in range(1, 11)]
+                yield Select(priority_options, value=5, id="priority-select")
+
+                yield Label("Description (optional):")
+                yield Input(placeholder="Brief description", id="description-input")
+
+    def on_mount(self) -> None:
+        """Focus the title input when dialog opens."""
+        title_input = self.query_one("#title-input", Input)
+        title_input.focus()
+
+    def action_cancel(self) -> None:
+        """Cancel and close dialog."""
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        """Create agenda item and close dialog."""
+        title_input = self.query_one("#title-input", Input)
+        priority_select = self.query_one("#priority-select", Select)
+        description_input = self.query_one("#description-input", Input)
+
+        title = title_input.value.strip()
+        if not title:
+            self.notify("Title is required", severity="error")
+            return
+
+        priority = priority_select.value
+        description = description_input.value.strip() or None
+
+        agenda_item = AgendaItem(
+            id=str(uuid.uuid4())[:8],
+            subject_id=self.subject_id,
+            title=title,
+            description=description,
+            priority=priority,
+            status=AgendaStatus.ACTIVE,
+            created_at=datetime.now(),
+        )
+
+        self.dismiss(agenda_item)
+
+
 class ViewNoteDialog(ModalScreen[Note | None]):
     """Dialog for viewing and editing a note."""
 
