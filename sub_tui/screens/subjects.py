@@ -12,7 +12,7 @@ from textual.widgets import DataTable, Footer, Header, Static, Label
 
 from ..database import Database
 from ..models import Action, AgendaItem, Meeting, Note
-from ..widgets import NewAgendaDialog, NewMeetingDialog, NewNoteDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
+from ..widgets import NewActionDialog, NewAgendaDialog, NewMeetingDialog, NewNoteDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
 
 
 class SubjectDetailScreen(Screen):
@@ -415,7 +415,7 @@ class SubjectDetailScreen(Screen):
         if table_id == "agenda-table":
             self.app.call_later(self._add_agenda)
         elif table_id == "actions-table":
-            self.notify("Adding actions not yet implemented", severity="warning")
+            self.app.call_later(self._add_action)
         elif table_id == "meetings-table":
             self.app.call_later(self._add_meeting)
         elif table_id == "notes-table":
@@ -431,6 +431,15 @@ class SubjectDetailScreen(Screen):
             self.db.add_agenda_item(result)
             self.refresh_agenda()
             self.notify(f"Agenda item '{result.title}' created")
+
+    @work
+    async def _add_action(self) -> None:
+        """Add a new action."""
+        result = await self.app.push_screen_wait(NewActionDialog(self.subject_id))
+        if result:
+            self.db.add_action(result)
+            self.refresh_actions()
+            self.notify(f"Action '{result.title}' created")
 
     @work
     async def _add_meeting(self) -> None:
