@@ -17,12 +17,12 @@ sub_tui/
 ├── app.py               # Main App class only (minimal)
 ├── models.py            # Data models (dataclasses)
 ├── database.py          # Database operations (CRUD + FTS)
-├── file_manager.py      # DEPRECATED: Export/backup (future)
 ├── screens/             # Screen definitions
 │   ├── __init__.py
 │   └── actions.py       # ActionsDashboard
-└── widgets/             # Reusable widgets (future)
-    └── __init__.py      # Placeholder for dialogs, list items, etc.
+└── widgets/             # Reusable widgets
+    ├── __init__.py
+    └── dialogs.py       # Modal dialogs for CRUD operations
 ```
 
 **Modular Design**: Each screen in its own file for better organization and scalability.
@@ -62,19 +62,13 @@ python3 create_test_data.py  # Creates sample data for testing
    - Markdown content stored directly in database (notes, meetings)
    - Database location: `data/index.db`
 
-3. **Export/Backup** (`sub_tui/file_manager.py` - DEPRECATED)
-   - FileManager is deprecated for primary storage
-   - Kept for future export/backup functionality (JSON dump, markdown export)
-   - Not currently used by the application
-
-4. **UI Layer** (modular structure)
+3. **UI Layer** (modular structure)
    - **`sub_tui/app.py`**: Main `SubTUIApp` class only (minimal)
    - **`sub_tui/screens/`**: Screen definitions (one file per screen/feature area)
      - `actions.py`: ActionsDashboard
      - Future: `subjects.py`, `meetings.py`, `notes.py`, `agenda.py`
-   - **`sub_tui/widgets/`**: Reusable components (future)
-     - `dialogs.py`: Modal dialogs
-     - `list_items.py`: Custom ListItem classes
+   - **`sub_tui/widgets/`**: Reusable components
+     - `dialogs.py`: Modal dialogs (NewSubjectDialog, ViewActionDialog, etc.)
    - Package is executable via `python3 -m sub_tui`
 
 ### Key Design Patterns

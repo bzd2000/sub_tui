@@ -23,15 +23,16 @@ class SubTUIApp(App):
     #actions-section {
         width: 100%;
         height: 1fr;
-        padding: 1;
+        padding: 0 1 1 1;
         border: solid $primary;
+        border-title-color: $text-muted;
+        border-title-style: bold;
         background: $surface;
     }
 
-    #actions-header {
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
+    #actions-section:focus-within {
+        border: solid $accent;
+        border-title-color: $accent;
     }
 
     #actions-table {
@@ -49,15 +50,16 @@ class SubTUIApp(App):
     .subject-card {
         width: 100%;
         height: 100%;
-        padding: 1;
+        padding: 0 1 1 1;
         border: solid $primary;
+        border-title-color: $text-muted;
+        border-title-style: bold;
         background: $surface;
     }
 
-    .subject-card-header {
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
+    .subject-card:focus-within {
+        border: solid $accent;
+        border-title-color: $accent;
     }
 
     .subject-table {
