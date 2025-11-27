@@ -6,11 +6,14 @@ This module will contain:
 """
 
 from .dialogs import (
+    ConfirmDialog,
+    EditSubjectDialog,
     NewActionDialog,
     NewAgendaDialog,
     NewMeetingDialog,
     NewNoteDialog,
     NewSubjectDialog,
+    SubjectLookupDialog,
     ViewActionDialog,
     ViewAgendaDialog,
     ViewMeetingDialog,
@@ -18,11 +21,14 @@ from .dialogs import (
 )
 
 __all__ = [
+    "ConfirmDialog",
+    "EditSubjectDialog",
     "NewActionDialog",
     "NewAgendaDialog",
     "NewMeetingDialog",
     "NewNoteDialog",
     "NewSubjectDialog",
+    "SubjectLookupDialog",
     "ViewActionDialog",
     "ViewAgendaDialog",
     "ViewMeetingDialog",

@@ -8,17 +8,424 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll, Container
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, TextArea, Static, Markdown, Header
+from textual.widgets import Footer, Input, Label, Markdown, Select, TextArea
 
 from ..models import Action, ActionStatus, Subject, SubjectType, Meeting, Note, AgendaItem, AgendaStatus
+from ..database import Database
+
+
+class ConfirmDialog(ModalScreen[bool]):
+    """Simple confirmation dialog."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "confirm", "Confirm", show=True),
+        Binding("y", "confirm", "Yes", show=True),
+        Binding("n", "cancel", "No", show=True),
+    ]
+
+    CSS = """
+    ConfirmDialog {
+        align: center middle;
+    }
+
+    #confirm-container {
+        width: 50%;
+        height: auto;
+        background: $surface;
+        border: solid $primary;
+        border-title-color: $accent;
+        border-title-style: bold;
+        padding: 1 2;
+    }
+
+    #confirm-message {
+        width: 100%;
+        text-align: center;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, title: str, message: str):
+        """Initialize confirmation dialog."""
+        super().__init__()
+        self.title = title
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog."""
+        container = Container(id="confirm-container")
+        container.border_title = self.title
+        with container:
+            yield Label(self.message, id="confirm-message")
+        yield Footer()
+
+    def action_confirm(self) -> None:
+        """Confirm the action."""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Cancel the action."""
+        self.dismiss(False)
+
+
+class SubjectLookupDialog(ModalScreen[str | None]):
+    """Dialog for searching and selecting a subject."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("enter", "select", "Select", show=True),
+        Binding("down", "focus_next", "Next", show=False),
+        Binding("up", "focus_previous", "Previous", show=False),
+    ]
+
+    CSS = """
+    SubjectLookupDialog {
+        align: center middle;
+    }
+
+    #lookup-container {
+        width: 70%;
+        height: 70%;
+        background: $surface;
+        border: solid $primary;
+        border-title-color: $accent;
+        border-title-style: bold;
+        padding: 0 1 1 1;
+    }
+
+    #search-input {
+        margin: 1 1 0 1;
+    }
+
+    #results-table {
+        margin: 1;
+        height: 1fr;
+    }
+
+    #no-results {
+        margin: 1;
+        color: $text-muted;
+        text-align: center;
+    }
+    """
+
+    def __init__(self, db: Database):
+        """Initialize dialog with database reference.
+
+        Args:
+            db: Database instance for searching subjects
+        """
+        super().__init__()
+        self.db = db
+        self.subject_ids: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        """Compose the dialog."""
+        from textual.widgets import DataTable
+
+        container = Container(id="lookup-container")
+        container.border_title = "Find Subject"
+        with container:
+            yield Input(placeholder="Type to search subjects...", id="search-input")
+            table = DataTable(id="results-table")
+            table.add_columns("Type", "Name", "Code", "Description")
+            table.cursor_type = "row"
+            yield table
+            yield Label("Start typing to search...", id="no-results")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Focus the search input and load all subjects initially."""
+        self.query_one("#search-input", Input).focus()
+        self._refresh_results("")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes."""
+        if event.input.id == "search-input":
+            self._refresh_results(event.value)
+
+    def _refresh_results(self, query: str) -> None:
+        """Refresh the results table based on search query."""
+        from textual.widgets import DataTable
+
+        table = self.query_one("#results-table", DataTable)
+        no_results_label = self.query_one("#no-results", Label)
+        table.clear()
+        self.subject_ids = []
+
+        # Get subjects - either all or filtered by search
+        if query.strip():
+            # Add prefix matching with * suffix for FTS5
+            # Escape special FTS characters and add wildcard
+            search_query = query.strip()
+            # Add * to each word for prefix matching
+            words = search_query.split()
+            fts_query = " ".join(f"{word}*" for word in words if word)
+
+            # Use FTS search for subjects only
+            results = self.db.search(fts_query, content_types=['subject'])
+            subject_ids = [r['content_id'] for r in results]
+            subjects = [self.db.get_subject(sid) for sid in subject_ids]
+            subjects = [s for s in subjects if s is not None]
+
+            # If FTS returns nothing, fall back to simple LIKE search
+            if not subjects:
+                all_subjects = self.db.get_all_subjects()
+                search_lower = query.strip().lower()
+                subjects = [
+                    s for s in all_subjects
+                    if search_lower in s.name.lower()
+                    or (s.code and search_lower in s.code.lower())
+                    or (s.description and search_lower in s.description.lower())
+                ]
+        else:
+            # Show all subjects when no query
+            subjects = self.db.get_all_subjects()
+
+        if subjects:
+            table.display = True
+            no_results_label.display = False
+
+            for subject in subjects:
+                self.subject_ids.append(subject.id)
+                type_icon = {
+                    SubjectType.PROJECT: "PRJ",
+                    SubjectType.BOARD: "BRD",
+                    SubjectType.TEAM: "TEM",
+                    SubjectType.PERSON: "PER",
+                }.get(subject.type, "???")
+                table.add_row(
+                    type_icon,
+                    subject.name,
+                    subject.code or "-",
+                    (subject.description or "-")[:40],
+                )
+
+            # Select first row if available
+            if table.row_count > 0:
+                table.move_cursor(row=0)
+        else:
+            table.display = False
+            no_results_label.display = True
+            if query.strip():
+                no_results_label.update("No subjects found")
+            else:
+                no_results_label.update("No subjects available")
+
+    def action_cancel(self) -> None:
+        """Cancel and close the dialog."""
+        self.dismiss(None)
+
+    def action_select(self) -> None:
+        """Select the current subject and close."""
+        from textual.widgets import DataTable
+
+        table = self.query_one("#results-table", DataTable)
+        if table.cursor_row is not None and table.cursor_row < len(self.subject_ids):
+            subject_id = self.subject_ids[table.cursor_row]
+            self.dismiss(subject_id)
+        else:
+            self.dismiss(None)
+
+    def on_data_table_row_selected(self, event) -> None:
+        """Handle row selection (Enter/double-click on table)."""
+        if event.data_table.id == "results-table":
+            self.action_select()
+
+
+# Shared CSS for all View dialogs
+VIEW_DIALOG_CSS = """
+    align: center middle;
+
+    #dialog-container {
+        width: 95%;
+        height: 90%;
+        layout: vertical;
+        background: $surface;
+        border: solid $primary;
+        border-title-color: $accent;
+        border-title-style: bold;
+        border-subtitle-color: $text-muted;
+        padding: 0 1 1 1;
+    }
+
+    /* Subject metadata - non-selectable display */
+    #subject-info {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        background: $boost;
+    }
+
+    #subject-info Label {
+        color: $text-muted;
+    }
+
+    #subject-info .value {
+        color: $text;
+    }
+
+    /* Item metadata - selectable, toggle editable */
+    #metadata-section {
+        width: 100%;
+        height: auto;
+        padding: 0 1 1 1;
+        border: solid $primary;
+        border-title-color: $text-muted;
+        border-title-style: bold;
+    }
+
+    #metadata-section:focus-within {
+        border: solid $accent;
+        border-title-color: $accent;
+    }
+
+    #metadata-display, #metadata-edit {
+        width: 100%;
+        height: auto;
+    }
+
+    .metadata-row {
+        width: 100%;
+        height: auto;
+        padding: 0;
+    }
+
+    .metadata-field {
+        width: 1fr;
+        height: auto;
+        padding-right: 2;
+    }
+
+    .metadata-field Label {
+        color: $text-muted;
+        margin: 0;
+    }
+
+    .metadata-field .display-value {
+        color: $text;
+        margin: 0;
+        padding: 0 1;
+    }
+
+    .metadata-field Input {
+        margin: 0;
+    }
+
+    .metadata-field Select {
+        margin: 0;
+    }
+
+    /* Content section - selectable, toggle editable */
+    #content-section {
+        width: 100%;
+        height: 1fr;
+        padding: 0 1 1 1;
+        border: solid $primary;
+        border-title-color: $text-muted;
+        border-title-style: bold;
+    }
+
+    #content-section:focus-within {
+        border: solid $accent;
+        border-title-color: $accent;
+    }
+
+    #markdown-scroll {
+        width: 100%;
+        height: 100%;
+    }
+
+    #markdown-viewer {
+        width: 100%;
+        padding: 1 2;
+    }
+
+    #content-editor {
+        width: 100%;
+        height: 100%;
+    }
+"""
+
+
+class BaseViewDialog(ModalScreen[object]):
+    """Base class for view/edit dialogs with metadata and content sections."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Close", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
+        Binding("e", "toggle_edit", "Edit", show=True),
+    ]
+
+    # Override in subclasses to customize empty content placeholder
+    EMPTY_CONTENT_PLACEHOLDER = "*No content*"
+
+    def __init__(self) -> None:
+        """Initialize base dialog state."""
+        super().__init__()
+        self.metadata_edit_mode: bool = False
+        self.content_edit_mode: bool = False
+
+    def _is_child_of(self, widget, parent) -> bool:
+        """Check if widget is a descendant of parent."""
+        current = widget.parent
+        while current:
+            if current == parent:
+                return True
+            current = current.parent
+        return False
+
+    def action_toggle_edit(self) -> None:
+        """Toggle edit mode for the focused section."""
+        focused = self.app.focused
+
+        metadata_section = self.query_one("#metadata-section", Container)
+        content_section = self.query_one("#content-section", Container)
+
+        if focused == metadata_section or (focused and self._is_child_of(focused, metadata_section)):
+            self._toggle_metadata_edit()
+        elif focused == content_section or (focused and self._is_child_of(focused, content_section)):
+            self._toggle_content_edit()
+
+    def _toggle_metadata_edit(self) -> None:
+        """Toggle metadata editing mode. Override in subclasses."""
+        raise NotImplementedError("Subclasses must implement _toggle_metadata_edit")
+
+    def _toggle_content_edit(self) -> None:
+        """Toggle content editing mode."""
+        markdown_scroll = self.query_one("#markdown-scroll", VerticalScroll)
+        markdown_viewer = self.query_one("#markdown-viewer", Markdown)
+        text_area = self.query_one("#content-editor", TextArea)
+
+        self.content_edit_mode = not self.content_edit_mode
+
+        if self.content_edit_mode:
+            markdown_scroll.display = False
+            text_area.display = True
+            text_area.focus()
+        else:
+            text_area.display = False
+            markdown_scroll.display = True
+            content_with_breaks = text_area.text.replace('\n', '  \n')
+            markdown_viewer.update(content_with_breaks if text_area.text.strip() else self.EMPTY_CONTENT_PLACEHOLDER)
+            self.query_one("#content-section", Container).focus()
+
+    def action_cancel(self) -> None:
+        """Cancel and close the dialog."""
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        """Save changes and close the dialog. Override in subclasses."""
+        raise NotImplementedError("Subclasses must implement action_save")
 
 
 class NewSubjectDialog(ModalScreen[Subject | None]):
     """Dialog for creating a new subject."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("ctrl+s", "save", "Create"),
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Create", show=True),
     ]
 
     CSS = """
@@ -90,6 +497,7 @@ class NewSubjectDialog(ModalScreen[Subject | None]):
 
                 yield Label("Description (optional):")
                 yield Input(placeholder="Brief description", id="description-input")
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the name input when dialog opens."""
@@ -118,7 +526,7 @@ class NewSubjectDialog(ModalScreen[Subject | None]):
 
         now = datetime.now()
         subject = Subject(
-            id=str(uuid.uuid4()),
+            id=str(uuid.uuid4())[:8],
             name=name,
             type=subject_type,
             code=code,
@@ -134,8 +542,8 @@ class EditSubjectDialog(ModalScreen[Subject | None]):
     """Dialog for editing a subject."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("ctrl+s", "save", "Save"),
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Save", show=True),
     ]
 
     CSS = """
@@ -206,6 +614,7 @@ class EditSubjectDialog(ModalScreen[Subject | None]):
 
                 yield Label("Description (optional):")
                 yield Input(value=self.subject.description or "", placeholder="Brief description", id="description-input")
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the name input when dialog opens."""
@@ -241,8 +650,8 @@ class NewActionDialog(ModalScreen[Action | None]):
     """Dialog for creating a new action."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("ctrl+s", "save", "Create"),
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Create", show=True),
     ]
 
     CSS = """
@@ -359,6 +768,7 @@ class NewActionDialog(ModalScreen[Action | None]):
             with Vertical(id="content-section"):
                 yield Label("Description (Markdown):")
                 yield TextArea.code_editor("", language="markdown", theme="monokai", id="description-area")
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the title input when dialog opens."""
@@ -421,10 +831,10 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
     """Dialog for creating a new meeting."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Close"),
-        Binding("ctrl+s", "save", "Create"),
-        Binding("ctrl+e", "toggle_markdown_edit", "Preview", priority=True),
-        Binding("ctrl+a", "add_action_from_content", "Add Action", priority=True),
+        Binding("escape", "cancel", "Close", show=True),
+        Binding("ctrl+s", "save", "Create", show=True),
+        Binding("ctrl+e", "toggle_markdown_edit", "Preview", show=True),
+        Binding("ctrl+a", "add_action_from_content", "Add Action", show=True),
     ]
 
     CSS = """
@@ -505,7 +915,6 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
         self.subject_name = subject_name
         self.markdown_edit_mode = True  # Start in edit mode
         self.db = db
-        self.content_id = None  # Will be set when content is created
 
     def compose(self) -> ComposeResult:
         """Compose the dialog."""
@@ -541,6 +950,7 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
                 # Text editor (visible by default)
                 text_area = TextArea.code_editor("# Meeting Notes\n\n", language="markdown", theme="monokai", id="content-editor")
                 yield text_area
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the title input when dialog opens."""
@@ -580,12 +990,12 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
         cursor_row, cursor_col = text_area.cursor_location
 
         # Show action creation dialog
-        # For new content, we can't link to meeting_id/note_id yet since it doesn't exist
+        # Note: meeting_id is None because the meeting doesn't exist yet (created on save)
         result = await self.app.push_screen_wait(
             NewActionDialog(
                 subject_id=self.subject_id,
                 subject_name=self.subject_name,
-                meeting_id=self.content_id  # Will be None for new content
+                meeting_id=None
             )
         )
 
@@ -643,140 +1053,20 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
         self.dismiss(meeting)
 
 
-class ViewMeetingDialog(ModalScreen[Meeting | None]):
+class ViewMeetingDialog(BaseViewDialog):
     """Dialog for viewing and editing a meeting."""
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Close"),
-        Binding("ctrl+s", "save", "Save"),
-        Binding("e", "toggle_edit", "Edit", priority=True),
-        Binding("ctrl+a", "add_action_from_content", "Add Action", priority=True),
+    BINDINGS = BaseViewDialog.BINDINGS + [
+        Binding("ctrl+a", "add_action_from_content", "Add Action", show=True),
     ]
 
-    CSS = """
-    ViewMeetingDialog {
-        align: center middle;
-    }
-
-    #dialog-container {
-        width: 95%;
-        height: 90%;
-        layout: vertical;
-        background: $surface;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
-        border-subtitle-color: $text-muted;
-        padding: 0 1 1 1;
-    }
-
-    /* Subject metadata - non-selectable display */
-    #subject-info {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-        background: $boost;
-    }
-
-    #subject-info Label {
-        color: $text-muted;
-    }
-
-    #subject-info .value {
-        color: $text;
-    }
-
-    /* Item metadata - selectable, toggle editable */
-    #metadata-section {
-        width: 100%;
-        height: auto;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #metadata-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #metadata-display, #metadata-edit {
-        width: 100%;
-        height: auto;
-    }
-
-    .metadata-row {
-        width: 100%;
-        height: auto;
-        padding: 0;
-    }
-
-    .metadata-field {
-        width: 1fr;
-        height: auto;
-        padding-right: 2;
-    }
-
-    .metadata-field Label {
-        color: $text-muted;
-        margin: 0;
-    }
-
-    .metadata-field .display-value {
-        color: $text;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    .metadata-field Input {
-        margin: 0;
-    }
-
-    /* Content section - selectable, toggle editable */
-    #content-section {
-        width: 100%;
-        height: 1fr;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #content-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #markdown-scroll {
-        width: 100%;
-        height: 100%;
-    }
-
-    #markdown-viewer {
-        width: 100%;
-        padding: 1 2;
-    }
-
-    #content-editor {
-        width: 100%;
-        height: 100%;
-    }
-    """
+    CSS = f"ViewMeetingDialog {{ {VIEW_DIALOG_CSS} }}"
 
     def __init__(self, meeting: Meeting, subject_name: str = "", db=None):
-        """Initialize dialog with meeting to view/edit.
-
-        Args:
-            meeting: The meeting to view/edit
-            subject_name: Name of the subject (for display in header)
-            db: Optional Database instance for creating actions from content
-        """
+        """Initialize dialog with meeting to view/edit."""
         super().__init__()
         self.meeting = meeting
         self.subject_name = subject_name
-        self.metadata_edit_mode = False
-        self.content_edit_mode = False
         self.db = db
 
     def compose(self) -> ComposeResult:
@@ -787,17 +1077,14 @@ class ViewMeetingDialog(ModalScreen[Meeting | None]):
         container = Container(id="dialog-container")
         container.border_title = "Meeting"
         with container:
-            # 1. Subject metadata (non-selectable display)
             with Horizontal(id="subject-info"):
                 yield Label(f"Subject: ")
                 yield Label(self.subject_name or "-", classes="value")
 
-            # 2. Item metadata section (selectable, toggle editable with 'e')
             metadata_section = Container(id="metadata-section")
             metadata_section.border_title = "Metadata"
             metadata_section.can_focus = True
             with metadata_section:
-                # Display mode (default)
                 with Vertical(id="metadata-display"):
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
@@ -811,7 +1098,6 @@ class ViewMeetingDialog(ModalScreen[Meeting | None]):
                             yield Label("Attendees:")
                             yield Label(attendees_str, classes="display-value", id="attendees-display")
 
-                # Edit mode (hidden by default)
                 edit_container = Vertical(id="metadata-edit")
                 edit_container.display = False
                 with edit_container:
@@ -827,41 +1113,18 @@ class ViewMeetingDialog(ModalScreen[Meeting | None]):
                             yield Label("Attendees:")
                             yield Input(value=", ".join(self.meeting.attendees), id="attendees-input")
 
-            # 3. Content section (selectable, toggle editable with 'e')
             content_section = Container(id="content-section")
             content_section.border_title = "Minutes"
             content_section.can_focus = True
             with content_section:
-                # Markdown viewer (default)
                 with VerticalScroll(id="markdown-scroll"):
                     content_with_breaks = self.meeting.content.replace('\n', '  \n')
                     yield Markdown(content_with_breaks, id="markdown-viewer")
 
-                # Text editor (hidden by default)
                 text_area = TextArea.code_editor(self.meeting.content, language="markdown", theme="monokai", id="content-editor")
                 text_area.display = False
                 yield text_area
-
-    def action_toggle_edit(self) -> None:
-        """Toggle edit mode for the focused section."""
-        focused = self.app.focused
-
-        metadata_section = self.query_one("#metadata-section", Container)
-        content_section = self.query_one("#content-section", Container)
-
-        if focused == metadata_section or (focused and self._is_child_of(focused, metadata_section)):
-            self._toggle_metadata_edit()
-        elif focused == content_section or (focused and self._is_child_of(focused, content_section)):
-            self._toggle_content_edit()
-
-    def _is_child_of(self, widget, parent) -> bool:
-        """Check if widget is a descendant of parent."""
-        current = widget.parent
-        while current:
-            if current == parent:
-                return True
-            current = current.parent
-        return False
+        yield Footer()
 
     def _toggle_metadata_edit(self) -> None:
         """Toggle metadata editing mode."""
@@ -875,36 +1138,13 @@ class ViewMeetingDialog(ModalScreen[Meeting | None]):
             metadata_edit.display = True
             self.query_one("#title-input", Input).focus()
         else:
-            title_input = self.query_one("#title-input", Input)
-            date_input = self.query_one("#date-input", Input)
-            attendees_input = self.query_one("#attendees-input", Input)
-
-            self.query_one("#title-display", Label).update(title_input.value or "-")
-            self.query_one("#date-display", Label).update(date_input.value or "-")
-            self.query_one("#attendees-display", Label).update(attendees_input.value or "-")
+            self.query_one("#title-display", Label).update(self.query_one("#title-input", Input).value or "-")
+            self.query_one("#date-display", Label).update(self.query_one("#date-input", Input).value or "-")
+            self.query_one("#attendees-display", Label).update(self.query_one("#attendees-input", Input).value or "-")
 
             metadata_edit.display = False
             metadata_display.display = True
             self.query_one("#metadata-section", Container).focus()
-
-    def _toggle_content_edit(self) -> None:
-        """Toggle content editing mode."""
-        markdown_scroll = self.query_one("#markdown-scroll", VerticalScroll)
-        markdown_viewer = self.query_one("#markdown-viewer", Markdown)
-        text_area = self.query_one("#content-editor", TextArea)
-
-        self.content_edit_mode = not self.content_edit_mode
-
-        if self.content_edit_mode:
-            markdown_scroll.display = False
-            text_area.display = True
-            text_area.focus()
-        else:
-            text_area.display = False
-            markdown_scroll.display = True
-            content_with_breaks = text_area.text.replace('\n', '  \n')
-            markdown_viewer.update(content_with_breaks if text_area.text.strip() else "*No content*")
-            self.query_one("#content-section", Container).focus()
 
     @work
     async def action_add_action_from_content(self) -> None:
@@ -929,10 +1169,6 @@ class ViewMeetingDialog(ModalScreen[Meeting | None]):
             action_ref = f"@action[{result.id}]{{{result.title}}}\n"
             text_area.insert(action_ref, (cursor_row, cursor_col))
             self.notify(f"Action '{result.title}' created and linked")
-
-    def action_cancel(self) -> None:
-        """Cancel and close the dialog."""
-        self.dismiss(None)
 
     def action_save(self) -> None:
         """Save changes and close the dialog."""
@@ -969,10 +1205,10 @@ class NewNoteDialog(ModalScreen[Note | None]):
     """Dialog for creating a new note."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Close"),
-        Binding("ctrl+s", "save", "Create"),
-        Binding("ctrl+e", "toggle_markdown_edit", "Preview", priority=True),
-        Binding("ctrl+a", "add_action_from_content", "Add Action", priority=True),
+        Binding("escape", "cancel", "Close", show=True),
+        Binding("ctrl+s", "save", "Create", show=True),
+        Binding("ctrl+e", "toggle_markdown_edit", "Preview", show=True),
+        Binding("ctrl+a", "add_action_from_content", "Add Action", show=True),
     ]
 
     CSS = """
@@ -1053,7 +1289,6 @@ class NewNoteDialog(ModalScreen[Note | None]):
         self.subject_name = subject_name
         self.markdown_edit_mode = True  # Start in edit mode
         self.db = db
-        self.content_id = None  # Will be set when content is created
 
     def compose(self) -> ComposeResult:
         """Compose dialog UI."""
@@ -1085,6 +1320,7 @@ class NewNoteDialog(ModalScreen[Note | None]):
                 # Text editor (visible by default)
                 text_area = TextArea.code_editor("# Note\n\n", language="markdown", theme="monokai", id="content-editor")
                 yield text_area
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the title input when dialog opens."""
@@ -1124,12 +1360,12 @@ class NewNoteDialog(ModalScreen[Note | None]):
         cursor_row, cursor_col = text_area.cursor_location
 
         # Show action creation dialog
-        # For new content, we can't link to note_id yet since it doesn't exist
+        # Note: note_id is None because the note doesn't exist yet (created on save)
         result = await self.app.push_screen_wait(
             NewActionDialog(
                 subject_id=self.subject_id,
                 subject_name=self.subject_name,
-                note_id=self.content_id  # Will be None for new content
+                note_id=None
             )
         )
 
@@ -1180,8 +1416,8 @@ class NewAgendaDialog(ModalScreen[AgendaItem | None]):
     """Dialog for creating a new agenda item."""
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("ctrl+s", "save", "Create"),
+        Binding("escape", "cancel", "Cancel", show=True),
+        Binding("ctrl+s", "save", "Create", show=True),
     ]
 
     CSS = """
@@ -1283,6 +1519,7 @@ class NewAgendaDialog(ModalScreen[AgendaItem | None]):
             with Vertical(id="content-section"):
                 yield Label("Description (Markdown):")
                 yield TextArea.code_editor("", language="markdown", theme="monokai", id="description-area")
+        yield Footer()
 
     def on_mount(self) -> None:
         """Focus the title input when dialog opens."""
@@ -1320,140 +1557,20 @@ class NewAgendaDialog(ModalScreen[AgendaItem | None]):
         self.dismiss(agenda_item)
 
 
-class ViewNoteDialog(ModalScreen[Note | None]):
+class ViewNoteDialog(BaseViewDialog):
     """Dialog for viewing and editing a note."""
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Close"),
-        Binding("ctrl+s", "save", "Save"),
-        Binding("e", "toggle_edit", "Edit", priority=True),
-        Binding("ctrl+a", "add_action_from_content", "Add Action", priority=True),
+    BINDINGS = BaseViewDialog.BINDINGS + [
+        Binding("ctrl+a", "add_action_from_content", "Add Action", priority=True, show=True),
     ]
 
-    CSS = """
-    ViewNoteDialog {
-        align: center middle;
-    }
-
-    #dialog-container {
-        width: 95%;
-        height: 90%;
-        layout: vertical;
-        background: $surface;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
-        border-subtitle-color: $text-muted;
-        padding: 0 1 1 1;
-    }
-
-    /* Subject metadata - non-selectable display */
-    #subject-info {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-        background: $boost;
-    }
-
-    #subject-info Label {
-        color: $text-muted;
-    }
-
-    #subject-info .value {
-        color: $text;
-    }
-
-    /* Item metadata - selectable, toggle editable */
-    #metadata-section {
-        width: 100%;
-        height: auto;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #metadata-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #metadata-display, #metadata-edit {
-        width: 100%;
-        height: auto;
-    }
-
-    .metadata-row {
-        width: 100%;
-        height: auto;
-        padding: 0;
-    }
-
-    .metadata-field {
-        width: 1fr;
-        height: auto;
-        padding-right: 2;
-    }
-
-    .metadata-field Label {
-        color: $text-muted;
-        margin: 0;
-    }
-
-    .metadata-field .display-value {
-        color: $text;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    .metadata-field Input {
-        margin: 0;
-    }
-
-    /* Content section - selectable, toggle editable */
-    #content-section {
-        width: 100%;
-        height: 1fr;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #content-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #markdown-scroll {
-        width: 100%;
-        height: 100%;
-    }
-
-    #markdown-viewer {
-        width: 100%;
-        padding: 1 2;
-    }
-
-    #content-editor {
-        width: 100%;
-        height: 100%;
-    }
-    """
+    CSS = f"ViewNoteDialog {{ {VIEW_DIALOG_CSS} }}"
 
     def __init__(self, note: Note, subject_name: str = "", db=None):
-        """Initialize dialog with note to view/edit.
-
-        Args:
-            note: The note to view/edit
-            subject_name: Name of the subject (for display in header)
-            db: Optional Database instance for creating actions from content
-        """
+        """Initialize dialog with note to view/edit."""
         super().__init__()
         self.note = note
         self.subject_name = subject_name
-        self.metadata_edit_mode = False
-        self.content_edit_mode = False
         self.db = db
 
     def compose(self) -> ComposeResult:
@@ -1463,17 +1580,14 @@ class ViewNoteDialog(ModalScreen[Note | None]):
         container = Container(id="dialog-container")
         container.border_title = "Note"
         with container:
-            # 1. Subject metadata (non-selectable display)
             with Horizontal(id="subject-info"):
                 yield Label(f"Subject: ")
                 yield Label(self.subject_name or "-", classes="value")
 
-            # 2. Item metadata section (selectable, toggle editable with 'e')
             metadata_section = Container(id="metadata-section")
             metadata_section.border_title = "Metadata"
             metadata_section.can_focus = True
             with metadata_section:
-                # Display mode (default)
                 with Vertical(id="metadata-display"):
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
@@ -1483,7 +1597,6 @@ class ViewNoteDialog(ModalScreen[Note | None]):
                             yield Label("Tags:")
                             yield Label(tags_str, classes="display-value", id="tags-display")
 
-                # Edit mode (hidden by default)
                 edit_container = Vertical(id="metadata-edit")
                 edit_container.display = False
                 with edit_container:
@@ -1495,41 +1608,18 @@ class ViewNoteDialog(ModalScreen[Note | None]):
                             yield Label("Tags:")
                             yield Input(value=", ".join(self.note.tags) if self.note.tags else "", id="tags-input")
 
-            # 3. Content section (selectable, toggle editable with 'e')
             content_section = Container(id="content-section")
             content_section.border_title = "Content"
             content_section.can_focus = True
             with content_section:
-                # Markdown viewer (default)
                 with VerticalScroll(id="markdown-scroll"):
                     content_with_breaks = self.note.content.replace('\n', '  \n')
                     yield Markdown(content_with_breaks, id="markdown-viewer")
 
-                # Text editor (hidden by default)
                 text_area = TextArea.code_editor(self.note.content, language="markdown", theme="monokai", id="content-editor")
                 text_area.display = False
                 yield text_area
-
-    def action_toggle_edit(self) -> None:
-        """Toggle edit mode for the focused section."""
-        focused = self.app.focused
-
-        metadata_section = self.query_one("#metadata-section", Container)
-        content_section = self.query_one("#content-section", Container)
-
-        if focused == metadata_section or (focused and self._is_child_of(focused, metadata_section)):
-            self._toggle_metadata_edit()
-        elif focused == content_section or (focused and self._is_child_of(focused, content_section)):
-            self._toggle_content_edit()
-
-    def _is_child_of(self, widget, parent) -> bool:
-        """Check if widget is a descendant of parent."""
-        current = widget.parent
-        while current:
-            if current == parent:
-                return True
-            current = current.parent
-        return False
+        yield Footer()
 
     def _toggle_metadata_edit(self) -> None:
         """Toggle metadata editing mode."""
@@ -1543,34 +1633,12 @@ class ViewNoteDialog(ModalScreen[Note | None]):
             metadata_edit.display = True
             self.query_one("#title-input", Input).focus()
         else:
-            title_input = self.query_one("#title-input", Input)
-            tags_input = self.query_one("#tags-input", Input)
-
-            self.query_one("#title-display", Label).update(title_input.value or "-")
-            self.query_one("#tags-display", Label).update(tags_input.value or "-")
+            self.query_one("#title-display", Label).update(self.query_one("#title-input", Input).value or "-")
+            self.query_one("#tags-display", Label).update(self.query_one("#tags-input", Input).value or "-")
 
             metadata_edit.display = False
             metadata_display.display = True
             self.query_one("#metadata-section", Container).focus()
-
-    def _toggle_content_edit(self) -> None:
-        """Toggle content editing mode."""
-        markdown_scroll = self.query_one("#markdown-scroll", VerticalScroll)
-        markdown_viewer = self.query_one("#markdown-viewer", Markdown)
-        text_area = self.query_one("#content-editor", TextArea)
-
-        self.content_edit_mode = not self.content_edit_mode
-
-        if self.content_edit_mode:
-            markdown_scroll.display = False
-            text_area.display = True
-            text_area.focus()
-        else:
-            text_area.display = False
-            markdown_scroll.display = True
-            content_with_breaks = text_area.text.replace('\n', '  \n')
-            markdown_viewer.update(content_with_breaks if text_area.text.strip() else "*No content*")
-            self.query_one("#content-section", Container).focus()
 
     @work
     async def action_add_action_from_content(self) -> None:
@@ -1596,10 +1664,6 @@ class ViewNoteDialog(ModalScreen[Note | None]):
             text_area.insert(action_ref, (cursor_row, cursor_col))
             self.notify(f"Action '{result.title}' created and linked")
 
-    def action_cancel(self) -> None:
-        """Cancel and close the dialog."""
-        self.dismiss(None)
-
     def action_save(self) -> None:
         """Save changes and close the dialog."""
         title_input = self.query_one("#title-input", Input)
@@ -1622,142 +1686,17 @@ class ViewNoteDialog(ModalScreen[Note | None]):
         self.dismiss(self.note)
 
 
-class ViewActionDialog(ModalScreen[Action | None]):
+class ViewActionDialog(BaseViewDialog):
     """Dialog for viewing and editing an action."""
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Close"),
-        Binding("ctrl+s", "save", "Save"),
-        Binding("e", "toggle_edit", "Edit", priority=True),
-    ]
-
-    CSS = """
-    ViewActionDialog {
-        align: center middle;
-    }
-
-    #dialog-container {
-        width: 95%;
-        height: 90%;
-        layout: vertical;
-        background: $surface;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
-        border-subtitle-color: $text-muted;
-        padding: 0 1 1 1;
-    }
-
-    /* Subject metadata - non-selectable display */
-    #subject-info {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-        background: $boost;
-    }
-
-    #subject-info Label {
-        color: $text-muted;
-    }
-
-    #subject-info .value {
-        color: $text;
-    }
-
-    /* Item metadata - selectable, toggle editable */
-    #metadata-section {
-        width: 100%;
-        height: auto;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #metadata-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #metadata-display, #metadata-edit {
-        width: 100%;
-        height: auto;
-    }
-
-    .metadata-row {
-        width: 100%;
-        height: auto;
-        padding: 0;
-    }
-
-    .metadata-field {
-        width: 1fr;
-        height: auto;
-        padding-right: 2;
-    }
-
-    .metadata-field Label {
-        color: $text-muted;
-        margin: 0;
-    }
-
-    .metadata-field .display-value {
-        color: $text;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    .metadata-field Input {
-        margin: 0;
-    }
-
-    .metadata-field Select {
-        margin: 0;
-    }
-
-    /* Content section - selectable, toggle editable */
-    #content-section {
-        width: 100%;
-        height: 1fr;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #content-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #markdown-scroll {
-        width: 100%;
-        height: 100%;
-    }
-
-    #markdown-viewer {
-        width: 100%;
-        padding: 1 2;
-    }
-
-    #content-editor {
-        width: 100%;
-        height: 100%;
-    }
-    """
+    CSS = f"ViewActionDialog {{ {VIEW_DIALOG_CSS} }}"
+    EMPTY_CONTENT_PLACEHOLDER = "*No description*"
 
     def __init__(self, action: Action, subject_name: str = ""):
-        """Initialize dialog with action to view/edit.
-
-        Args:
-            action: The action to view/edit
-            subject_name: Name of the subject (for display in header)
-        """
+        """Initialize dialog with action to view/edit."""
         super().__init__()
         self.action = action
         self.subject_name = subject_name
-        self.metadata_edit_mode = False
-        self.content_edit_mode = False
 
     def compose(self) -> ComposeResult:
         """Compose the dialog."""
@@ -1769,17 +1708,14 @@ class ViewActionDialog(ModalScreen[Action | None]):
         container = Container(id="dialog-container")
         container.border_title = "Action"
         with container:
-            # 1. Subject metadata (non-selectable display)
             with Horizontal(id="subject-info"):
                 yield Label(f"Subject: ")
                 yield Label(self.subject_name or "-", classes="value")
 
-            # 2. Item metadata section (selectable, toggle editable with 'e')
             metadata_section = Container(id="metadata-section")
             metadata_section.border_title = "Metadata"
             metadata_section.can_focus = True
             with metadata_section:
-                # Display mode (default)
                 with Vertical(id="metadata-display"):
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
@@ -1796,7 +1732,6 @@ class ViewActionDialog(ModalScreen[Action | None]):
                             yield Label("Tags:")
                             yield Label(tags_str, classes="display-value", id="tags-display")
 
-                # Edit mode (hidden by default)
                 edit_container = Vertical(id="metadata-edit")
                 edit_container.display = False
                 with edit_container:
@@ -1820,44 +1755,19 @@ class ViewActionDialog(ModalScreen[Action | None]):
                             yield Label("Tags:")
                             yield Input(value=", ".join(self.action.tags), id="tags-input")
 
-            # 3. Content section (selectable, toggle editable with 'e')
             content_section = Container(id="content-section")
             content_section.border_title = "Description"
             content_section.can_focus = True
             with content_section:
-                # Markdown viewer (default)
                 with VerticalScroll(id="markdown-scroll"):
                     display_content = content or "*No description*"
                     content_with_breaks = display_content.replace('\n', '  \n')
                     yield Markdown(content_with_breaks, id="markdown-viewer")
 
-                # Text editor (hidden by default)
                 text_area = TextArea.code_editor(content, language="markdown", theme="monokai", id="content-editor")
                 text_area.display = False
                 yield text_area
-
-    def action_toggle_edit(self) -> None:
-        """Toggle edit mode for the focused section."""
-        focused = self.app.focused
-
-        # Check if metadata section or its children are focused
-        metadata_section = self.query_one("#metadata-section", Container)
-        content_section = self.query_one("#content-section", Container)
-
-        # Determine which section is focused
-        if focused == metadata_section or (focused and self._is_child_of(focused, metadata_section)):
-            self._toggle_metadata_edit()
-        elif focused == content_section or (focused and self._is_child_of(focused, content_section)):
-            self._toggle_content_edit()
-
-    def _is_child_of(self, widget, parent) -> bool:
-        """Check if widget is a descendant of parent."""
-        current = widget.parent
-        while current:
-            if current == parent:
-                return True
-            current = current.parent
-        return False
+        yield Footer()
 
     def _toggle_metadata_edit(self) -> None:
         """Toggle metadata editing mode."""
@@ -1869,53 +1779,21 @@ class ViewActionDialog(ModalScreen[Action | None]):
         if self.metadata_edit_mode:
             metadata_display.display = False
             metadata_edit.display = True
-            # Focus first input
             self.query_one("#title-input", Input).focus()
         else:
-            # Update display values from inputs
-            title_input = self.query_one("#title-input", Input)
-            due_input = self.query_one("#due-date-input", Input)
+            self.query_one("#title-display", Label).update(self.query_one("#title-input", Input).value or "-")
+            self.query_one("#due-display", Label).update(self.query_one("#due-date-input", Input).value or "-")
             status_select = self.query_one("#status-select", Select)
-            tags_input = self.query_one("#tags-input", Input)
-
-            self.query_one("#title-display", Label).update(title_input.value or "-")
-            self.query_one("#due-display", Label).update(due_input.value or "-")
             status_display = {"todo": "TODO", "in_progress": "In Progress", "done": "Done"}.get(status_select.value, status_select.value)
             self.query_one("#status-display", Label).update(status_display)
-            self.query_one("#tags-display", Label).update(tags_input.value or "-")
+            self.query_one("#tags-display", Label).update(self.query_one("#tags-input", Input).value or "-")
 
             metadata_edit.display = False
             metadata_display.display = True
-            # Re-focus the section
             self.query_one("#metadata-section", Container).focus()
-
-    def _toggle_content_edit(self) -> None:
-        """Toggle content editing mode."""
-        markdown_scroll = self.query_one("#markdown-scroll", VerticalScroll)
-        markdown_viewer = self.query_one("#markdown-viewer", Markdown)
-        text_area = self.query_one("#content-editor", TextArea)
-
-        self.content_edit_mode = not self.content_edit_mode
-
-        if self.content_edit_mode:
-            markdown_scroll.display = False
-            text_area.display = True
-            text_area.focus()
-        else:
-            text_area.display = False
-            markdown_scroll.display = True
-            content_with_breaks = text_area.text.replace('\n', '  \n')
-            markdown_viewer.update(content_with_breaks if text_area.text.strip() else "*No description*")
-            # Re-focus the section
-            self.query_one("#content-section", Container).focus()
-
-    def action_cancel(self) -> None:
-        """Cancel and close the dialog."""
-        self.dismiss(None)
 
     def action_save(self) -> None:
         """Save changes and close the dialog."""
-        # Get metadata values
         title_input = self.query_one("#title-input", Input)
         due_date_input = self.query_one("#due-date-input", Input)
         status_select = self.query_one("#status-select", Select)
@@ -1927,7 +1805,6 @@ class ViewActionDialog(ModalScreen[Action | None]):
             self.notify("Title is required", severity="error")
             return
 
-        # Parse due date
         due_date = None
         if due_date_input.value.strip():
             try:
@@ -1936,21 +1813,18 @@ class ViewActionDialog(ModalScreen[Action | None]):
                 self.notify("Invalid date format. Use YYYY-MM-DD", severity="error")
                 return
 
-        # Parse tags
         tags_str = tags_input.value.strip()
         tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
 
         old_status = self.action.status
         new_status = ActionStatus(status_select.value)
 
-        # Update action
         self.action.title = title
         self.action.due_date = due_date
         self.action.status = new_status
         self.action.tags = tags
         self.action.description = text_area.text if text_area.text.strip() else None
 
-        # Update completed_at if status changed
         if old_status != ActionStatus.DONE and new_status == ActionStatus.DONE:
             self.action.completed_at = datetime.now()
         elif old_status == ActionStatus.DONE and new_status != ActionStatus.DONE:
@@ -1959,142 +1833,17 @@ class ViewActionDialog(ModalScreen[Action | None]):
         self.dismiss(self.action)
 
 
-class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
+class ViewAgendaDialog(BaseViewDialog):
     """Dialog for viewing and editing an agenda item."""
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Close"),
-        Binding("ctrl+s", "save", "Save"),
-        Binding("e", "toggle_edit", "Edit", priority=True),
-    ]
-
-    CSS = """
-    ViewAgendaDialog {
-        align: center middle;
-    }
-
-    #dialog-container {
-        width: 95%;
-        height: 90%;
-        layout: vertical;
-        background: $surface;
-        border: solid $primary;
-        border-title-color: $accent;
-        border-title-style: bold;
-        border-subtitle-color: $text-muted;
-        padding: 0 1 1 1;
-    }
-
-    /* Subject metadata - non-selectable display */
-    #subject-info {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-        background: $boost;
-    }
-
-    #subject-info Label {
-        color: $text-muted;
-    }
-
-    #subject-info .value {
-        color: $text;
-    }
-
-    /* Item metadata - selectable, toggle editable */
-    #metadata-section {
-        width: 100%;
-        height: auto;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #metadata-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #metadata-display, #metadata-edit {
-        width: 100%;
-        height: auto;
-    }
-
-    .metadata-row {
-        width: 100%;
-        height: auto;
-        padding: 0;
-    }
-
-    .metadata-field {
-        width: 1fr;
-        height: auto;
-        padding-right: 2;
-    }
-
-    .metadata-field Label {
-        color: $text-muted;
-        margin: 0;
-    }
-
-    .metadata-field .display-value {
-        color: $text;
-        margin: 0;
-        padding: 0 1;
-    }
-
-    .metadata-field Input {
-        margin: 0;
-    }
-
-    .metadata-field Select {
-        margin: 0;
-    }
-
-    /* Content section - selectable, toggle editable */
-    #content-section {
-        width: 100%;
-        height: 1fr;
-        padding: 0 1 1 1;
-        border: solid $primary;
-        border-title-color: $text-muted;
-        border-title-style: bold;
-    }
-
-    #content-section:focus-within {
-        border: solid $accent;
-        border-title-color: $accent;
-    }
-
-    #markdown-scroll {
-        width: 100%;
-        height: 100%;
-    }
-
-    #markdown-viewer {
-        width: 100%;
-        padding: 1 2;
-    }
-
-    #content-editor {
-        width: 100%;
-        height: 100%;
-    }
-    """
+    CSS = f"ViewAgendaDialog {{ {VIEW_DIALOG_CSS} }}"
+    EMPTY_CONTENT_PLACEHOLDER = "*No description*"
 
     def __init__(self, agenda_item: AgendaItem, subject_name: str = ""):
-        """Initialize dialog with agenda item to view/edit.
-
-        Args:
-            agenda_item: The agenda item to view/edit
-            subject_name: Name of the subject (for display in header)
-        """
+        """Initialize dialog with agenda item to view/edit."""
         super().__init__()
         self.agenda_item = agenda_item
         self.subject_name = subject_name
-        self.metadata_edit_mode = False
-        self.content_edit_mode = False
 
     def compose(self) -> ComposeResult:
         """Compose the dialog."""
@@ -2104,17 +1853,14 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
         container = Container(id="dialog-container")
         container.border_title = "Agenda Item"
         with container:
-            # 1. Subject metadata (non-selectable display)
             with Horizontal(id="subject-info"):
                 yield Label(f"Subject: ")
                 yield Label(self.subject_name or "-", classes="value")
 
-            # 2. Item metadata section (selectable, toggle editable with 'e')
             metadata_section = Container(id="metadata-section")
             metadata_section.border_title = "Metadata"
             metadata_section.can_focus = True
             with metadata_section:
-                # Display mode (default)
                 with Vertical(id="metadata-display"):
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
@@ -2128,7 +1874,6 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
                             yield Label("Status:")
                             yield Label(status_display, classes="display-value", id="status-display")
 
-                # Edit mode (hidden by default)
                 edit_container = Vertical(id="metadata-edit")
                 edit_container.display = False
                 with edit_container:
@@ -2138,7 +1883,8 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
                             yield Input(value=self.agenda_item.title, id="title-input")
                         with Vertical(classes="metadata-field"):
                             yield Label("Priority (1-10):")
-                            yield Input(value=str(self.agenda_item.priority), id="priority-input")
+                            priority_options = [(str(i), i) for i in range(1, 11)]
+                            yield Select(priority_options, value=self.agenda_item.priority, id="priority-select")
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
                             yield Label("Status:")
@@ -2148,42 +1894,19 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
                                 id="status-select"
                             )
 
-            # 3. Content section (selectable, toggle editable with 'e')
             content_section = Container(id="content-section")
             content_section.border_title = "Description"
             content_section.can_focus = True
             with content_section:
-                # Markdown viewer (default)
                 with VerticalScroll(id="markdown-scroll"):
                     display_content = content or "*No description*"
                     content_with_breaks = display_content.replace('\n', '  \n')
                     yield Markdown(content_with_breaks, id="markdown-viewer")
 
-                # Text editor (hidden by default)
                 text_area = TextArea.code_editor(content, language="markdown", theme="monokai", id="content-editor")
                 text_area.display = False
                 yield text_area
-
-    def action_toggle_edit(self) -> None:
-        """Toggle edit mode for the focused section."""
-        focused = self.app.focused
-
-        metadata_section = self.query_one("#metadata-section", Container)
-        content_section = self.query_one("#content-section", Container)
-
-        if focused == metadata_section or (focused and self._is_child_of(focused, metadata_section)):
-            self._toggle_metadata_edit()
-        elif focused == content_section or (focused and self._is_child_of(focused, content_section)):
-            self._toggle_content_edit()
-
-    def _is_child_of(self, widget, parent) -> bool:
-        """Check if widget is a descendant of parent."""
-        current = widget.parent
-        while current:
-            if current == parent:
-                return True
-            current = current.parent
-        return False
+        yield Footer()
 
     def _toggle_metadata_edit(self) -> None:
         """Toggle metadata editing mode."""
@@ -2197,12 +1920,10 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
             metadata_edit.display = True
             self.query_one("#title-input", Input).focus()
         else:
-            title_input = self.query_one("#title-input", Input)
-            priority_input = self.query_one("#priority-input", Input)
+            self.query_one("#title-display", Label).update(self.query_one("#title-input", Input).value or "-")
+            priority_select = self.query_one("#priority-select", Select)
+            self.query_one("#priority-display", Label).update(str(priority_select.value) if priority_select.value else "-")
             status_select = self.query_one("#status-select", Select)
-
-            self.query_one("#title-display", Label).update(title_input.value or "-")
-            self.query_one("#priority-display", Label).update(priority_input.value or "-")
             status_display = {"active": "Active", "discussed": "Discussed", "archived": "Archived"}.get(status_select.value, status_select.value)
             self.query_one("#status-display", Label).update(status_display)
 
@@ -2210,33 +1931,10 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
             metadata_display.display = True
             self.query_one("#metadata-section", Container).focus()
 
-    def _toggle_content_edit(self) -> None:
-        """Toggle content editing mode."""
-        markdown_scroll = self.query_one("#markdown-scroll", VerticalScroll)
-        markdown_viewer = self.query_one("#markdown-viewer", Markdown)
-        text_area = self.query_one("#content-editor", TextArea)
-
-        self.content_edit_mode = not self.content_edit_mode
-
-        if self.content_edit_mode:
-            markdown_scroll.display = False
-            text_area.display = True
-            text_area.focus()
-        else:
-            text_area.display = False
-            markdown_scroll.display = True
-            content_with_breaks = text_area.text.replace('\n', '  \n')
-            markdown_viewer.update(content_with_breaks if text_area.text.strip() else "*No description*")
-            self.query_one("#content-section", Container).focus()
-
-    def action_cancel(self) -> None:
-        """Cancel and close the dialog."""
-        self.dismiss(None)
-
     def action_save(self) -> None:
         """Save changes and close the dialog."""
         title_input = self.query_one("#title-input", Input)
-        priority_input = self.query_one("#priority-input", Input)
+        priority_select = self.query_one("#priority-select", Select)
         status_select = self.query_one("#status-select", Select)
         text_area = self.query_one("#content-editor", TextArea)
 
@@ -2245,20 +1943,11 @@ class ViewAgendaDialog(ModalScreen[AgendaItem | None]):
             self.notify("Title is required", severity="error")
             return
 
-        try:
-            priority = int(priority_input.value.strip())
-            if priority < 1 or priority > 10:
-                self.notify("Priority must be between 1 and 10", severity="error")
-                return
-        except ValueError:
-            self.notify("Priority must be a number", severity="error")
-            return
-
         old_status = self.agenda_item.status
         new_status = AgendaStatus(status_select.value)
 
         self.agenda_item.title = title
-        self.agenda_item.priority = priority
+        self.agenda_item.priority = priority_select.value
         self.agenda_item.status = new_status
         self.agenda_item.description = text_area.text if text_area.text.strip() else None
 

@@ -11,8 +11,8 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static, Label
 
 from ..database import Database
-from ..models import Action, AgendaItem, Meeting, Note
-from ..widgets import NewActionDialog, NewAgendaDialog, NewMeetingDialog, NewNoteDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
+from ..models import Action, AgendaItem, Meeting, Note, Subject
+from ..widgets import ConfirmDialog, EditSubjectDialog, NewActionDialog, NewAgendaDialog, NewMeetingDialog, NewNoteDialog, SubjectLookupDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
 
 
 class SubjectDetailScreen(Screen):
@@ -25,11 +25,13 @@ class SubjectDetailScreen(Screen):
         padding: 0 2;
         background: $boost;
         border: solid $primary;
+        border-title-color: $text-muted;
+        border-title-style: bold;
     }
 
-    #subject-title {
-        text-style: bold;
-        color: $accent;
+    #subject-header:focus {
+        border: solid $accent;
+        border-title-color: $accent;
     }
 
     #sections-container {
@@ -41,16 +43,16 @@ class SubjectDetailScreen(Screen):
     .section-card {
         width: 100%;
         height: 1fr;
-        padding: 1;
+        padding: 0 1 1 1;
         border: solid $primary;
+        border-title-color: $text-muted;
+        border-title-style: bold;
         background: $surface;
     }
 
-    .section-header {
-        text-style: bold;
-        color: $text;
-        margin-bottom: 1;
-        padding: 0;
+    .section-card:focus-within {
+        border: solid $accent;
+        border-title-color: $accent;
     }
 
     .section-table {
@@ -72,6 +74,8 @@ class SubjectDetailScreen(Screen):
         Binding("e", "edit_item", "Edit"),
         Binding("a", "add_item", "Add"),
         Binding("ctrl+d", "delete_item", "Delete"),
+        Binding("/", "subject_lookup", "Find Subject"),
+        Binding("ctrl+p", "subject_lookup", "Find Subject"),
     ]
 
     def __init__(self, db: Database, subject_id: str, selected_action_id: Optional[str] = None):
@@ -86,6 +90,7 @@ class SubjectDetailScreen(Screen):
         self.db = db
         self.subject_id = subject_id
         self.selected_action_id = selected_action_id
+        self.subject_name = ""  # Will be set when subject is loaded
 
         # Track IDs for each section
         self.action_ids: list[str] = []
@@ -97,40 +102,47 @@ class SubjectDetailScreen(Screen):
         """Compose the UI with card-based sections in single column."""
         yield Header()
 
-        # Subject header
-        with Container(id="subject-header"):
+        # Subject header (focusable for editing)
+        header = Container(id="subject-header")
+        header.can_focus = True
+        header.border_title = "Subject"
+        with header:
             yield Static("", id="subject-title")
             yield Static("", id="subject-info")
 
         # Single column: Agenda, Actions, Meetings, Notes (equal height)
         with Vertical(id="sections-container"):
             # Agenda items section
-            with Vertical(classes="section-card"):
-                yield Label("Agenda Items", classes="section-header")
+            agenda_card = Vertical(classes="section-card")
+            agenda_card.border_title = "Agenda Items"
+            with agenda_card:
                 table = DataTable(id="agenda-table", classes="section-table")
                 table.add_columns("Title", "Priority", "Status")
                 table.cursor_type = "row"
                 yield table
 
             # Actions section
-            with Vertical(classes="section-card"):
-                yield Label("Actions", classes="section-header")
+            actions_card = Vertical(classes="section-card")
+            actions_card.border_title = "Actions"
+            with actions_card:
                 table = DataTable(id="actions-table", classes="section-table")
                 table.add_columns("Title", "Due", "Status")
                 table.cursor_type = "row"
                 yield table
 
             # Meetings section
-            with Vertical(classes="section-card"):
-                yield Label("Meeting Minutes", classes="section-header")
+            meetings_card = Vertical(classes="section-card")
+            meetings_card.border_title = "Meeting Minutes"
+            with meetings_card:
                 table = DataTable(id="meetings-table", classes="section-table")
                 table.add_columns("Date", "Title", "Attendees")
                 table.cursor_type = "row"
                 yield table
 
             # Notes section
-            with Vertical(classes="section-card"):
-                yield Label("Knowledge Notes", classes="section-header")
+            notes_card = Vertical(classes="section-card")
+            notes_card.border_title = "Knowledge Notes"
+            with notes_card:
                 table = DataTable(id="notes-table", classes="section-table")
                 table.add_columns("Title", "Tags", "Updated")
                 table.cursor_type = "row"
@@ -151,9 +163,16 @@ class SubjectDetailScreen(Screen):
             self.app.pop_screen()
             return
 
-        # Update header
+        # Store subject name for dialogs
+        self.subject_name = subject.name
+
+        # Update header border title with subject name
+        header = self.query_one("#subject-header", Container)
+        header.border_title = subject.name
+
+        # Update header content
         title_widget = self.query_one("#subject-title", Static)
-        title_widget.update(f"{subject.name}")
+        title_widget.update(f"[dim]Type:[/dim] {subject.type.value.title()}")
 
         info_parts = []
         if subject.code:
@@ -287,7 +306,7 @@ class SubjectDetailScreen(Screen):
             action_id = self.action_ids[row_index]
             action = self.db.get_action(action_id)
             if action:
-                result = await self.app.push_screen_wait(ViewActionDialog(action))
+                result = await self.app.push_screen_wait(ViewActionDialog(action, self.subject_name))
                 if result:
                     self.db.update_action(result)
                     self.refresh_actions()
@@ -297,7 +316,7 @@ class SubjectDetailScreen(Screen):
             agenda_id = self.agenda_ids[row_index]
             agenda_item = self.db.get_agenda_item(agenda_id)
             if agenda_item:
-                result = await self.app.push_screen_wait(ViewAgendaDialog(agenda_item))
+                result = await self.app.push_screen_wait(ViewAgendaDialog(agenda_item, self.subject_name))
                 if result:
                     self.db.update_agenda_item(result)
                     self.refresh_agenda()
@@ -307,7 +326,7 @@ class SubjectDetailScreen(Screen):
             meeting_id = self.meeting_ids[row_index]
             meeting = self.db.get_meeting(meeting_id)
             if meeting:
-                result = await self.app.push_screen_wait(ViewMeetingDialog(meeting, self.db))
+                result = await self.app.push_screen_wait(ViewMeetingDialog(meeting, self.subject_name, self.db))
                 if result:
                     self.db.update_meeting(result)
                     self.refresh_meetings()
@@ -317,7 +336,7 @@ class SubjectDetailScreen(Screen):
             note_id = self.note_ids[row_index]
             note = self.db.get_note(note_id)
             if note:
-                result = await self.app.push_screen_wait(ViewNoteDialog(note, self.db))
+                result = await self.app.push_screen_wait(ViewNoteDialog(note, self.subject_name, self.db))
                 if result:
                     self.db.update_note(result)
                     self.refresh_notes()
@@ -332,19 +351,37 @@ class SubjectDetailScreen(Screen):
         """Go back to main dashboard."""
         self.app.pop_screen()
 
+    @work
+    async def action_subject_lookup(self) -> None:
+        """Open subject lookup dialog."""
+        subject_id = await self.app.push_screen_wait(SubjectLookupDialog(self.db))
+        if subject_id and subject_id != self.subject_id:
+            # Switch to the selected subject
+            self.app.switch_screen(SubjectDetailScreen(self.db, subject_id))
+
     def get_focused_table(self) -> tuple[DataTable | None, str]:
         """Get the currently focused table and its ID."""
-        try:
-            focused = self.app.focused
-            if isinstance(focused, DataTable):
-                return focused, focused.id
-        except Exception:
-            pass
+        focused = self.app.focused
+        if isinstance(focused, DataTable):
+            return focused, focused.id or ""
         return None, ""
 
     def action_edit_item(self) -> None:
-        """Edit the selected item (context-aware based on focused table)."""
+        """Edit the selected item (context-aware based on focused widget)."""
+        # Check if subject header is focused
+        try:
+            focused = self.app.focused
+            if focused and focused.id == "subject-header":
+                subject = self.db.get_subject(self.subject_id)
+                if subject:
+                    self.app.call_later(self._edit_subject, subject)
+                return
+        except Exception:
+            pass
+
         table, table_id = self.get_focused_table()
+
+        # If no table is focused, do nothing
         if not table or table.cursor_row is None:
             return
 
@@ -373,9 +410,18 @@ class SubjectDetailScreen(Screen):
                 self.app.call_later(self._edit_note, note)
 
     @work
+    async def _edit_subject(self, subject: Subject) -> None:
+        """Edit the subject metadata."""
+        result = await self.app.push_screen_wait(EditSubjectDialog(subject))
+        if result:
+            self.db.update_subject(result)
+            self.load_subject_data()
+            self.notify(f"Subject '{result.name}' updated")
+
+    @work
     async def _edit_action(self, action: Action) -> None:
         """Edit an action."""
-        result = await self.app.push_screen_wait(ViewActionDialog(action))
+        result = await self.app.push_screen_wait(ViewActionDialog(action, self.subject_name))
         if result:
             self.db.update_action(result)
             self.refresh_actions()
@@ -384,7 +430,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _edit_agenda(self, agenda_item: AgendaItem) -> None:
         """Edit an agenda item."""
-        result = await self.app.push_screen_wait(ViewAgendaDialog(agenda_item))
+        result = await self.app.push_screen_wait(ViewAgendaDialog(agenda_item, self.subject_name))
         if result:
             self.db.update_agenda_item(result)
             self.refresh_agenda()
@@ -393,7 +439,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _edit_meeting(self, meeting: Meeting) -> None:
         """Edit a meeting."""
-        result = await self.app.push_screen_wait(ViewMeetingDialog(meeting, self.db))
+        result = await self.app.push_screen_wait(ViewMeetingDialog(meeting, self.subject_name, self.db))
         if result:
             self.db.update_meeting(result)
             self.refresh_meetings()
@@ -402,7 +448,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _edit_note(self, note: Note) -> None:
         """Edit a note."""
-        result = await self.app.push_screen_wait(ViewNoteDialog(note, self.db))
+        result = await self.app.push_screen_wait(ViewNoteDialog(note, self.subject_name, self.db))
         if result:
             self.db.update_note(result)
             self.refresh_notes()
@@ -426,7 +472,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _add_agenda(self) -> None:
         """Add a new agenda item."""
-        result = await self.app.push_screen_wait(NewAgendaDialog(self.subject_id))
+        result = await self.app.push_screen_wait(NewAgendaDialog(self.subject_id, self.subject_name))
         if result:
             self.db.add_agenda_item(result)
             self.refresh_agenda()
@@ -435,7 +481,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _add_action(self) -> None:
         """Add a new action."""
-        result = await self.app.push_screen_wait(NewActionDialog(self.subject_id))
+        result = await self.app.push_screen_wait(NewActionDialog(self.subject_id, self.subject_name))
         if result:
             self.db.add_action(result)
             self.refresh_actions()
@@ -444,7 +490,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _add_meeting(self) -> None:
         """Add a new meeting."""
-        result = await self.app.push_screen_wait(NewMeetingDialog(self.subject_id, self.db))
+        result = await self.app.push_screen_wait(NewMeetingDialog(self.subject_id, self.subject_name, self.db))
         if result:
             self.db.add_meeting(result)
             self.refresh_meetings()
@@ -453,7 +499,7 @@ class SubjectDetailScreen(Screen):
     @work
     async def _add_note(self) -> None:
         """Add a new note."""
-        result = await self.app.push_screen_wait(NewNoteDialog(self.subject_id, self.db))
+        result = await self.app.push_screen_wait(NewNoteDialog(self.subject_id, self.subject_name, self.db))
         if result:
             self.db.add_note(result)
             self.refresh_notes()
@@ -469,27 +515,63 @@ class SubjectDetailScreen(Screen):
             action_id = self.action_ids[table.cursor_row]
             action = self.db.get_action(action_id)
             if action:
-                self.db.delete_action(action_id)
-                self.refresh_actions()
-                self.notify(f"Deleted action: {action.title}")
+                self.app.call_later(self._confirm_delete_action, action)
         elif table_id == "agenda-table" and table.cursor_row < len(self.agenda_ids):
             agenda_id = self.agenda_ids[table.cursor_row]
             agenda_item = self.db.get_agenda_item(agenda_id)
             if agenda_item:
-                self.db.delete_agenda_item(agenda_id)
-                self.refresh_agenda()
-                self.notify(f"Deleted agenda item: {agenda_item.title}")
+                self.app.call_later(self._confirm_delete_agenda, agenda_item)
         elif table_id == "meetings-table" and table.cursor_row < len(self.meeting_ids):
             meeting_id = self.meeting_ids[table.cursor_row]
             meeting = self.db.get_meeting(meeting_id)
             if meeting:
-                self.db.delete_meeting(meeting_id)
-                self.refresh_meetings()
-                self.notify("Deleted meeting")
+                self.app.call_later(self._confirm_delete_meeting, meeting)
         elif table_id == "notes-table" and table.cursor_row < len(self.note_ids):
             note_id = self.note_ids[table.cursor_row]
             note = self.db.get_note(note_id)
             if note:
-                self.db.delete_note(note_id)
-                self.refresh_notes()
-                self.notify(f"Deleted note: {note.title}")
+                self.app.call_later(self._confirm_delete_note, note)
+
+    @work
+    async def _confirm_delete_action(self, action: Action) -> None:
+        """Confirm and delete an action."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog("Delete Action", f"Delete action '{action.title}'?")
+        )
+        if confirmed:
+            self.db.delete_action(action.id)
+            self.refresh_actions()
+            self.notify(f"Deleted action: {action.title}")
+
+    @work
+    async def _confirm_delete_agenda(self, agenda_item: AgendaItem) -> None:
+        """Confirm and delete an agenda item."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog("Delete Agenda Item", f"Delete agenda item '{agenda_item.title}'?")
+        )
+        if confirmed:
+            self.db.delete_agenda_item(agenda_item.id)
+            self.refresh_agenda()
+            self.notify(f"Deleted agenda item: {agenda_item.title}")
+
+    @work
+    async def _confirm_delete_meeting(self, meeting: Meeting) -> None:
+        """Confirm and delete a meeting."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog("Delete Meeting", f"Delete meeting '{meeting.title}'?")
+        )
+        if confirmed:
+            self.db.delete_meeting(meeting.id)
+            self.refresh_meetings()
+            self.notify(f"Deleted meeting: {meeting.title}")
+
+    @work
+    async def _confirm_delete_note(self, note: Note) -> None:
+        """Confirm and delete a note."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog("Delete Note", f"Delete note '{note.title}'?")
+        )
+        if confirmed:
+            self.db.delete_note(note.id)
+            self.refresh_notes()
+            self.notify(f"Deleted note: {note.title}")

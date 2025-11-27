@@ -1,5 +1,6 @@
 """SQLite database for storing and querying all application data."""
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -294,6 +295,12 @@ class Database:
 
     def delete_subject(self, subject_id: str) -> None:
         """Delete a subject and all related data."""
+        # Delete related data first (cascade)
+        self.conn.execute("DELETE FROM agenda_items WHERE subject_id = ?", (subject_id,))
+        self.conn.execute("DELETE FROM meetings WHERE subject_id = ?", (subject_id,))
+        self.conn.execute("DELETE FROM actions WHERE subject_id = ?", (subject_id,))
+        self.conn.execute("DELETE FROM notes WHERE subject_id = ?", (subject_id,))
+        # Delete the subject itself
         self.conn.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
         self.conn.commit()
 
@@ -376,7 +383,7 @@ class Database:
                 meeting.subject_id,
                 meeting.title,
                 meeting.date.isoformat(),
-                ', '.join(meeting.attendees),
+                json.dumps(meeting.attendees),
                 meeting.content,
                 meeting.created_at.isoformat(),
                 meeting.updated_at.isoformat(),
@@ -412,7 +419,7 @@ class Database:
             (
                 meeting.title,
                 meeting.date.isoformat(),
-                ', '.join(meeting.attendees),
+                json.dumps(meeting.attendees),
                 meeting.content,
                 meeting.updated_at.isoformat(),
                 meeting.id,
@@ -626,7 +633,11 @@ class Database:
 
         Returns:
             List of dicts with: content_type, content_id, subject_id, subject_name, title, rank
+            Returns empty list if query is invalid (e.g., unbalanced quotes)
         """
+        if not query or not query.strip():
+            return []
+
         conditions = ["unified_fts MATCH ?"]
         params = [query]
 
@@ -637,17 +648,20 @@ class Database:
 
         where_clause = " AND ".join(conditions)
 
-        cursor = self.conn.execute(
-            f"""SELECT content_type, content_id, subject_id, subject_name, title,
-                       rank
-                FROM unified_fts
-                WHERE {where_clause}
-                ORDER BY rank
-                LIMIT 50""",
-            params
-        )
-
-        return [dict(row) for row in cursor.fetchall()]
+        try:
+            cursor = self.conn.execute(
+                f"""SELECT content_type, content_id, subject_id, subject_name, title,
+                           rank
+                    FROM unified_fts
+                    WHERE {where_clause}
+                    ORDER BY rank
+                    LIMIT 50""",
+                params
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError:
+            # Invalid FTS query (e.g., unbalanced quotes, invalid syntax)
+            return []
 
     # ==================== Utility ====================
 

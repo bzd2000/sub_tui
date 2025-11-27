@@ -10,8 +10,8 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from ..database import Database
-from ..models import SubjectType
-from ..widgets import NewActionDialog, NewSubjectDialog
+from ..models import ActionStatus, SubjectType
+from ..widgets import ConfirmDialog, NewActionDialog, NewSubjectDialog, SubjectLookupDialog
 
 
 class MainDashboard(Screen):
@@ -50,8 +50,9 @@ class MainDashboard(Screen):
 
         with Container(id="main-container"):
             # Actions table (full width, top half)
-            with Container(id="actions-section"):
-                yield Label("Actions", id="actions-header")
+            actions_section = Container(id="actions-section")
+            actions_section.border_title = "Actions"
+            with actions_section:
                 table = DataTable(id="actions-table")
                 table.add_columns("Subject", "Title", "Due", "Status")
                 table.cursor_type = "row"
@@ -60,32 +61,36 @@ class MainDashboard(Screen):
             # Subjects grid (2x2, bottom half)
             with Grid(id="subjects-grid"):
                 # Projects
-                with Container(classes="subject-card"):
-                    yield Label("Projects", classes="subject-card-header")
+                projects_card = Container(classes="subject-card")
+                projects_card.border_title = "Projects"
+                with projects_card:
                     projects_table = DataTable(id="projects-table", classes="subject-table")
                     projects_table.add_columns("Name", "Actions")
                     projects_table.cursor_type = "row"
                     yield projects_table
 
                 # Boards
-                with Container(classes="subject-card"):
-                    yield Label("Boards", classes="subject-card-header")
+                boards_card = Container(classes="subject-card")
+                boards_card.border_title = "Boards"
+                with boards_card:
                     boards_table = DataTable(id="boards-table", classes="subject-table")
                     boards_table.add_columns("Name", "Actions")
                     boards_table.cursor_type = "row"
                     yield boards_table
 
                 # Teams
-                with Container(classes="subject-card"):
-                    yield Label("Teams", classes="subject-card-header")
+                teams_card = Container(classes="subject-card")
+                teams_card.border_title = "Teams"
+                with teams_card:
                     teams_table = DataTable(id="teams-table", classes="subject-table")
                     teams_table.add_columns("Name", "Actions")
                     teams_table.cursor_type = "row"
                     yield teams_table
 
                 # People
-                with Container(classes="subject-card"):
-                    yield Label("People", classes="subject-card-header")
+                people_card = Container(classes="subject-card")
+                people_card.border_title = "People"
+                with people_card:
                     people_table = DataTable(id="people-table", classes="subject-table")
                     people_table.add_columns("Name", "Actions")
                     people_table.cursor_type = "row"
@@ -186,21 +191,9 @@ class MainDashboard(Screen):
     @work
     async def action_add_action(self) -> None:
         """Add new action."""
-        # Get all subjects for the dialog
-        subjects = self.db.get_all_subjects()
-        if not subjects:
-            self.notify("No subjects found. Create a subject first.", severity="warning")
-            return
-
-        # Show dialog and wait for result
-        result = await self.app.push_screen_wait(NewActionDialog(subjects))
-
-        if result:
-            # Add to database
-            self.db.add_action(result)
-            # Refresh the UI (already on main thread after await)
-            self.refresh_actions()
-            self.notify(f"Action '{result.title}' created successfully")
+        # From main dashboard, adding action needs a subject to be selected first
+        # Navigate to subject screen instead
+        self.notify("Select a subject first to add an action (press Enter on subject)", severity="warning")
 
     def action_toggle_action_status(self) -> None:
         """Toggle status of selected action (TODO → IN_PROGRESS → DONE → TODO)."""
@@ -214,7 +207,6 @@ class MainDashboard(Screen):
             return
 
         # Cycle through statuses
-        from ..models import ActionStatus
         if action.status == ActionStatus.TODO:
             action.status = ActionStatus.IN_PROGRESS
         elif action.status == ActionStatus.IN_PROGRESS:
@@ -239,9 +231,18 @@ class MainDashboard(Screen):
         if not action:
             return
 
-        self.db.delete_action(action_id)
-        self.refresh_actions()
-        self.notify(f"Deleted action: {action.title}")
+        self.app.call_later(self._confirm_delete_action, action)
+
+    @work
+    async def _confirm_delete_action(self, action) -> None:
+        """Confirm and delete an action."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog("Delete Action", f"Delete action '{action.title}'?")
+        )
+        if confirmed:
+            self.db.delete_action(action.id)
+            self.refresh_actions()
+            self.notify(f"Deleted action: {action.title}")
 
     def action_open_subject(self) -> None:
         """Open subject detail view for the selected action."""
@@ -267,10 +268,14 @@ class MainDashboard(Screen):
         # Push subject detail screen with selected action
         self.app.push_screen(SubjectDetailScreen(self.db, action.subject_id, selected_action_id=action_id))
 
-    def action_subject_lookup(self) -> None:
-        """Open subject lookup."""
-        # TODO: Show subject lookup screen
-        pass
+    @work
+    async def action_subject_lookup(self) -> None:
+        """Open subject lookup dialog."""
+        subject_id = await self.app.push_screen_wait(SubjectLookupDialog(self.db))
+        if subject_id:
+            # Import here to avoid circular dependency
+            from .subjects import SubjectDetailScreen
+            self.app.push_screen(SubjectDetailScreen(self.db, subject_id))
 
     def open_subject_from_table(self, subject_ids: list[str], row_index: int) -> None:
         """Open subject detail screen from a subject table."""
@@ -284,12 +289,9 @@ class MainDashboard(Screen):
 
     def get_focused_table(self) -> tuple[DataTable | None, str]:
         """Get the currently focused table and its ID."""
-        try:
-            focused = self.app.focused
-            if isinstance(focused, DataTable):
-                return focused, focused.id
-        except Exception:
-            pass
+        focused = self.app.focused
+        if isinstance(focused, DataTable):
+            return focused, focused.id or ""
         return None, ""
 
     def action_edit_item(self) -> None:
@@ -347,8 +349,36 @@ class MainDashboard(Screen):
         if table_id == "actions-table":
             self.action_delete_action()
         elif table_id in ("projects-table", "boards-table", "teams-table", "people-table"):
-            # Delete subject
-            self.notify("Deleting subjects not yet implemented", severity="warning")
+            # Get the appropriate ID list
+            if table_id == "projects-table":
+                ids = self.project_ids
+            elif table_id == "boards-table":
+                ids = self.board_ids
+            elif table_id == "teams-table":
+                ids = self.team_ids
+            else:  # people-table
+                ids = self.person_ids
+
+            if table.cursor_row < len(ids):
+                subject_id = ids[table.cursor_row]
+                subject = self.db.get_subject(subject_id)
+                if subject:
+                    self.app.call_later(self._confirm_delete_subject, subject)
+
+    @work
+    async def _confirm_delete_subject(self, subject) -> None:
+        """Confirm and delete a subject with all related data."""
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog(
+                "Delete Subject",
+                f"Delete '{subject.name}' and ALL related data (actions, meetings, notes, agenda items)?"
+            )
+        )
+        if confirmed:
+            self.db.delete_subject(subject.id)
+            self.refresh_subjects()
+            self.refresh_actions()
+            self.notify(f"Deleted subject: {subject.name}")
 
     def refresh_subjects(self) -> None:
         """Refresh the subjects tables."""

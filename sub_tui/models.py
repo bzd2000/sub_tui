@@ -20,6 +20,11 @@ class AgendaStatus(str, Enum):
     DISCUSSED = "discussed"
     ARCHIVED = "archived"
 
+    @property
+    def display(self) -> str:
+        """Get display-friendly name."""
+        return {"active": "Active", "discussed": "Discussed", "archived": "Archived"}[self.value]
+
 
 class RecurrencePattern(str, Enum):
     """Recurrence patterns for agenda items."""
@@ -33,6 +38,11 @@ class ActionStatus(str, Enum):
     TODO = "todo"
     IN_PROGRESS = "in_progress"
     DONE = "done"
+
+    @property
+    def display(self) -> str:
+        """Get display-friendly name."""
+        return {"todo": "TODO", "in_progress": "In Progress", "done": "Done"}[self.value]
 
 
 @dataclass
@@ -146,12 +156,26 @@ class Meeting:
     @classmethod
     def from_dict(cls, data: dict) -> "Meeting":
         """Create from dictionary."""
+        # Parse attendees - can be JSON string, list, or comma-separated string
+        attendees_data = data["attendees"]
+        if isinstance(attendees_data, list):
+            attendees = attendees_data
+        elif isinstance(attendees_data, str):
+            # Try JSON first, fall back to comma-separated
+            if attendees_data.startswith("["):
+                import json
+                attendees = json.loads(attendees_data)
+            else:
+                attendees = [a.strip() for a in attendees_data.split(",") if a.strip()]
+        else:
+            attendees = []
+
         return cls(
             id=data["id"],
             subject_id=data["subject_id"],
             title=data.get("title", "Meeting"),  # Default for old data
             date=datetime.fromisoformat(data["date"]),
-            attendees=data["attendees"],
+            attendees=attendees,
             content=data["content"],
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
