@@ -345,6 +345,7 @@ VIEW_DIALOG_CSS = """
     #content-editor {
         width: 100%;
         height: 100%;
+        border: none;
     }
 """
 
@@ -899,6 +900,7 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
     #content-editor {
         width: 100%;
         height: 100%;
+        border: none;
     }
     """
 
@@ -1273,6 +1275,7 @@ class NewNoteDialog(ModalScreen[Note | None]):
     #content-editor {
         width: 100%;
         height: 100%;
+        border: none;
     }
     """
 
