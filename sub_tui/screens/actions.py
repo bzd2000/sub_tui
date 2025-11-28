@@ -65,7 +65,7 @@ class MainDashboard(Screen):
                 projects_card.border_title = "Projects"
                 with projects_card:
                     projects_table = DataTable(id="projects-table", classes="subject-table")
-                    projects_table.add_columns("Name", "Actions")
+                    projects_table.add_columns("Name", "Actions", "Agenda")
                     projects_table.cursor_type = "row"
                     yield projects_table
 
@@ -74,7 +74,7 @@ class MainDashboard(Screen):
                 boards_card.border_title = "Boards"
                 with boards_card:
                     boards_table = DataTable(id="boards-table", classes="subject-table")
-                    boards_table.add_columns("Name", "Actions")
+                    boards_table.add_columns("Name", "Actions", "Agenda")
                     boards_table.cursor_type = "row"
                     yield boards_table
 
@@ -83,7 +83,7 @@ class MainDashboard(Screen):
                 teams_card.border_title = "Teams"
                 with teams_card:
                     teams_table = DataTable(id="teams-table", classes="subject-table")
-                    teams_table.add_columns("Name", "Actions")
+                    teams_table.add_columns("Name", "Actions", "Agenda")
                     teams_table.cursor_type = "row"
                     yield teams_table
 
@@ -92,7 +92,7 @@ class MainDashboard(Screen):
                 people_card.border_title = "People"
                 with people_card:
                     people_table = DataTable(id="people-table", classes="subject-table")
-                    people_table.add_columns("Name", "Actions")
+                    people_table.add_columns("Name", "Actions", "Agenda")
                     people_table.cursor_type = "row"
                     yield people_table
 
@@ -391,14 +391,22 @@ class MainDashboard(Screen):
         teams = [s for s in all_subjects if s.type == SubjectType.TEAM]
         people = [s for s in all_subjects if s.type == SubjectType.PERSON]
 
+        def get_counts(subject_id: str) -> tuple[int, int]:
+            """Get action count and active agenda count for a subject."""
+            actions = self.db.get_actions(subject_id)
+            action_count = len([a for a in actions if not a.archived_at])
+            agenda_items = self.db.get_agenda_items(subject_id)
+            agenda_count = len([i for i in agenda_items if i.status.value == "active"])
+            return action_count, agenda_count
+
         # Update projects table
         projects_table = self.query_one("#projects-table", DataTable)
         projects_table.clear()
         self.project_ids = []
         for subject in projects:
             self.project_ids.append(subject.id)
-            action_count = len(self.db.get_actions(subject.id))
-            projects_table.add_row(subject.name, str(action_count))
+            action_count, agenda_count = get_counts(subject.id)
+            projects_table.add_row(subject.name, str(action_count), str(agenda_count))
 
         # Update boards table
         boards_table = self.query_one("#boards-table", DataTable)
@@ -406,8 +414,8 @@ class MainDashboard(Screen):
         self.board_ids = []
         for subject in boards:
             self.board_ids.append(subject.id)
-            action_count = len(self.db.get_actions(subject.id))
-            boards_table.add_row(subject.name, str(action_count))
+            action_count, agenda_count = get_counts(subject.id)
+            boards_table.add_row(subject.name, str(action_count), str(agenda_count))
 
         # Update teams table
         teams_table = self.query_one("#teams-table", DataTable)
@@ -415,8 +423,8 @@ class MainDashboard(Screen):
         self.team_ids = []
         for subject in teams:
             self.team_ids.append(subject.id)
-            action_count = len(self.db.get_actions(subject.id))
-            teams_table.add_row(subject.name, str(action_count))
+            action_count, agenda_count = get_counts(subject.id)
+            teams_table.add_row(subject.name, str(action_count), str(agenda_count))
 
         # Update people table
         people_table = self.query_one("#people-table", DataTable)
@@ -424,5 +432,5 @@ class MainDashboard(Screen):
         self.person_ids = []
         for subject in people:
             self.person_ids.append(subject.id)
-            action_count = len(self.db.get_actions(subject.id))
-            people_table.add_row(subject.name, str(action_count))
+            action_count, agenda_count = get_counts(subject.id)
+            people_table.add_row(subject.name, str(action_count), str(agenda_count))
