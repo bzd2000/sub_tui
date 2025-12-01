@@ -11,7 +11,7 @@ from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from ..database import Database
 from ..models import ActionStatus, SubjectType
-from ..widgets import ConfirmDialog, NewActionDialog, NewSubjectDialog, SubjectLookupDialog
+from ..widgets import ConfirmDialog, NewActionDialog, NewSubjectDialog, SubjectLookupDialog, format_date_locale
 
 
 class MainDashboard(Screen):
@@ -145,7 +145,7 @@ class MainDashboard(Screen):
             # Format due date
             if due:
                 due_dt = datetime.fromisoformat(due)
-                due_str = due_dt.strftime("%Y-%m-%d")
+                due_str = format_date_locale(due_dt)
 
                 # Highlight overdue
                 if due_dt.date() < now.date() and status != "done":

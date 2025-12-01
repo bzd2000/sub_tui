@@ -12,6 +12,7 @@ from textual.widgets import Footer, Input, Label, Markdown, Select, TextArea
 
 from ..models import Action, ActionStatus, Subject, SubjectType, Meeting, Note, AgendaItem, AgendaStatus
 from ..database import Database
+from .date_input import DateInput, format_date_locale
 
 
 class ConfirmDialog(ModalScreen[bool]):
@@ -751,7 +752,7 @@ class NewActionDialog(ModalScreen[Action | None]):
             with Horizontal(id="metadata-row"):
                 with Vertical(classes="metadata-field"):
                     yield Label("Due Date:")
-                    yield Input(placeholder="YYYY-MM-DD", id="due-date-input")
+                    yield DateInput(id="due-date-input")
 
                 with Vertical(classes="metadata-field"):
                     yield Label("Status:")
@@ -784,7 +785,7 @@ class NewActionDialog(ModalScreen[Action | None]):
         """Create action and close dialog."""
         # Get input values
         title_input = self.query_one("#title-input", Input)
-        due_date_input = self.query_one("#due-date-input", Input)
+        due_date_input = self.query_one("#due-date-input", DateInput)
         status_select = self.query_one("#status-select", Select)
         tags_input = self.query_one("#tags-input", Input)
         description_area = self.query_one("#description-area", TextArea)
@@ -796,14 +797,10 @@ class NewActionDialog(ModalScreen[Action | None]):
 
         description = description_area.text.strip() or None
 
-        # Parse due date
+        # Get due date from DateInput widget
         due_date = None
-        if due_date_input.value.strip():
-            try:
-                due_date = datetime.fromisoformat(due_date_input.value.strip())
-            except ValueError:
-                self.notify("Invalid date format. Use YYYY-MM-DD", severity="error")
-                return
+        if due_date_input.date_value:
+            due_date = datetime.combine(due_date_input.date_value, datetime.min.time())
 
         # Parse tags
         tags_str = tags_input.value.strip()
@@ -935,7 +932,7 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
             with Horizontal(id="metadata-row"):
                 with Vertical(classes="metadata-field"):
                     yield Label("Date:")
-                    yield Input(value=datetime.now().strftime("%Y-%m-%d"), id="date-input")
+                    yield DateInput(id="date-input")
 
                 with Vertical(classes="metadata-field"):
                     yield Label("Attendees:")
@@ -1018,7 +1015,7 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
     def action_save(self) -> None:
         """Create meeting and close dialog."""
         title_input = self.query_one("#title-input", Input)
-        date_input = self.query_one("#date-input", Input)
+        date_input = self.query_one("#date-input", DateInput)
         attendees_input = self.query_one("#attendees-input", Input)
         text_area = self.query_one("#content-editor", TextArea)
 
@@ -1027,14 +1024,12 @@ class NewMeetingDialog(ModalScreen[Meeting | None]):
             self.notify("Title is required", severity="error")
             return
 
-        # Parse date (without time, set to noon)
-        try:
-            meeting_date = datetime.strptime(date_input.value.strip(), "%Y-%m-%d")
-            # Set to noon to avoid any timezone issues
-            meeting_date = meeting_date.replace(hour=12, minute=0, second=0, microsecond=0)
-        except ValueError:
-            self.notify("Invalid date format. Use YYYY-MM-DD", severity="error")
+        # Get date from DateInput widget
+        if not date_input.date_value:
+            self.notify("Date is required", severity="error")
             return
+        meeting_date = datetime.combine(date_input.date_value, datetime.min.time())
+        meeting_date = meeting_date.replace(hour=12, minute=0, second=0, microsecond=0)
 
         # Parse attendees
         attendees_str = attendees_input.value.strip()
@@ -1073,7 +1068,7 @@ class ViewMeetingDialog(BaseViewDialog):
 
     def compose(self) -> ComposeResult:
         """Compose the dialog."""
-        date_str = self.meeting.date.strftime("%Y-%m-%d")
+        date_str = format_date_locale(self.meeting.date)
         attendees_str = ", ".join(self.meeting.attendees) if self.meeting.attendees else "-"
 
         container = Container(id="dialog-container")
@@ -1109,7 +1104,7 @@ class ViewMeetingDialog(BaseViewDialog):
                             yield Input(value=self.meeting.title, id="title-input")
                         with Vertical(classes="metadata-field"):
                             yield Label("Date:")
-                            yield Input(value=date_str, id="date-input")
+                            yield DateInput(value=self.meeting.date.date(), id="date-input")
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
                             yield Label("Attendees:")
@@ -1141,7 +1136,8 @@ class ViewMeetingDialog(BaseViewDialog):
             self.query_one("#title-input", Input).focus()
         else:
             self.query_one("#title-display", Label).update(self.query_one("#title-input", Input).value or "-")
-            self.query_one("#date-display", Label).update(self.query_one("#date-input", Input).value or "-")
+            date_input = self.query_one("#date-input", DateInput)
+            self.query_one("#date-display", Label).update(format_date_locale(date_input.date_value))
             self.query_one("#attendees-display", Label).update(self.query_one("#attendees-input", Input).value or "-")
 
             metadata_edit.display = False
@@ -1175,7 +1171,7 @@ class ViewMeetingDialog(BaseViewDialog):
     def action_save(self) -> None:
         """Save changes and close the dialog."""
         title_input = self.query_one("#title-input", Input)
-        date_input = self.query_one("#date-input", Input)
+        date_input = self.query_one("#date-input", DateInput)
         attendees_input = self.query_one("#attendees-input", Input)
         text_area = self.query_one("#content-editor", TextArea)
 
@@ -1184,12 +1180,12 @@ class ViewMeetingDialog(BaseViewDialog):
             self.notify("Title is required", severity="error")
             return
 
-        try:
-            meeting_date = datetime.strptime(date_input.value.strip(), "%Y-%m-%d")
-            meeting_date = meeting_date.replace(hour=12, minute=0, second=0, microsecond=0)
-        except ValueError:
-            self.notify("Invalid date format. Use YYYY-MM-DD", severity="error")
+        # Get date from DateInput widget
+        if not date_input.date_value:
+            self.notify("Date is required", severity="error")
             return
+        meeting_date = datetime.combine(date_input.date_value, datetime.min.time())
+        meeting_date = meeting_date.replace(hour=12, minute=0, second=0, microsecond=0)
 
         attendees_str = attendees_input.value.strip()
         attendees = [a.strip() for a in attendees_str.split(",") if a.strip()] if attendees_str else []
@@ -1704,7 +1700,7 @@ class ViewActionDialog(BaseViewDialog):
     def compose(self) -> ComposeResult:
         """Compose the dialog."""
         content = self.action.description or ""
-        due_date_str = self.action.due_date.strftime("%Y-%m-%d") if self.action.due_date else "-"
+        due_date_str = format_date_locale(self.action.due_date)
         status_display = {"todo": "TODO", "in_progress": "In Progress", "done": "Done"}.get(self.action.status.value, self.action.status.value)
         tags_str = ", ".join(self.action.tags) if self.action.tags else "-"
 
@@ -1744,8 +1740,8 @@ class ViewActionDialog(BaseViewDialog):
                             yield Input(value=self.action.title, id="title-input")
                         with Vertical(classes="metadata-field"):
                             yield Label("Due Date:")
-                            due_input_str = self.action.due_date.strftime("%Y-%m-%d") if self.action.due_date else ""
-                            yield Input(value=due_input_str, placeholder="YYYY-MM-DD", id="due-date-input")
+                            due_date_value = self.action.due_date.date() if self.action.due_date else None
+                            yield DateInput(value=due_date_value, default_today=False, id="due-date-input")
                     with Horizontal(classes="metadata-row"):
                         with Vertical(classes="metadata-field"):
                             yield Label("Status:")
@@ -1785,7 +1781,8 @@ class ViewActionDialog(BaseViewDialog):
             self.query_one("#title-input", Input).focus()
         else:
             self.query_one("#title-display", Label).update(self.query_one("#title-input", Input).value or "-")
-            self.query_one("#due-display", Label).update(self.query_one("#due-date-input", Input).value or "-")
+            due_date_input = self.query_one("#due-date-input", DateInput)
+            self.query_one("#due-display", Label).update(format_date_locale(due_date_input.date_value))
             status_select = self.query_one("#status-select", Select)
             status_display = {"todo": "TODO", "in_progress": "In Progress", "done": "Done"}.get(status_select.value, status_select.value)
             self.query_one("#status-display", Label).update(status_display)
@@ -1798,7 +1795,7 @@ class ViewActionDialog(BaseViewDialog):
     def action_save(self) -> None:
         """Save changes and close the dialog."""
         title_input = self.query_one("#title-input", Input)
-        due_date_input = self.query_one("#due-date-input", Input)
+        due_date_input = self.query_one("#due-date-input", DateInput)
         status_select = self.query_one("#status-select", Select)
         tags_input = self.query_one("#tags-input", Input)
         text_area = self.query_one("#content-editor", TextArea)
@@ -1808,13 +1805,10 @@ class ViewActionDialog(BaseViewDialog):
             self.notify("Title is required", severity="error")
             return
 
+        # Get due date from DateInput widget
         due_date = None
-        if due_date_input.value.strip():
-            try:
-                due_date = datetime.fromisoformat(due_date_input.value.strip())
-            except ValueError:
-                self.notify("Invalid date format. Use YYYY-MM-DD", severity="error")
-                return
+        if due_date_input.date_value:
+            due_date = datetime.combine(due_date_input.date_value, datetime.min.time())
 
         tags_str = tags_input.value.strip()
         tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []

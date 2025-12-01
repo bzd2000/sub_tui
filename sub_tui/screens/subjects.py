@@ -12,7 +12,7 @@ from textual.widgets import DataTable, Footer, Header, Static, Label
 
 from ..database import Database
 from ..models import Action, AgendaItem, Meeting, Note, Subject
-from ..widgets import ConfirmDialog, EditSubjectDialog, NewActionDialog, NewAgendaDialog, NewMeetingDialog, NewNoteDialog, SubjectLookupDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog
+from ..widgets import ConfirmDialog, EditSubjectDialog, NewActionDialog, NewAgendaDialog, NewMeetingDialog, NewNoteDialog, SubjectLookupDialog, ViewActionDialog, ViewAgendaDialog, ViewMeetingDialog, ViewNoteDialog, format_date_locale
 
 
 class SubjectDetailScreen(Screen):
@@ -207,7 +207,7 @@ class SubjectDetailScreen(Screen):
             # Format due date
             due_str = "-"
             if action.due_date:
-                due_str = action.due_date.strftime("%Y-%m-%d")
+                due_str = format_date_locale(action.due_date)
                 if action.due_date.date() < datetime.now().date() and action.status.value != "done":
                     due_str = f"[red]{due_str}[/red]"
 
@@ -263,7 +263,7 @@ class SubjectDetailScreen(Screen):
         for meeting in meetings:
             self.meeting_ids.append(meeting.id)
 
-            date_str = meeting.date.strftime("%Y-%m-%d")
+            date_str = format_date_locale(meeting.date)
             title = meeting.title or "Untitled"
             attendees_str = ", ".join(meeting.attendees[:3])
             if len(meeting.attendees) > 3:
@@ -289,7 +289,7 @@ class SubjectDetailScreen(Screen):
             if note.tags and len(note.tags) > 3:
                 tags_str += f" +{len(note.tags)-3}"
 
-            updated_str = note.updated_at.strftime("%Y-%m-%d")
+            updated_str = format_date_locale(note.updated_at, with_day_prefix=False)
 
             table.add_row(note.title, tags_str, updated_str)
 
